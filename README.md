@@ -1,44 +1,33 @@
-# skala-vue
+# Vue.js 2일차
 
-This template should help get you started developing with Vue 3 in Vite.
+# 날씨 Mockup 추가 구현 사항
 
-## Recommended IDE Setup
+과제의 기본 요구사항 외에 직접 추가한 데이터와 기능을 정리했습니다.
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+## 추가 데이터
 
-## Recommended Browser Setup
+- 기존 서울·수원·부산 외에 제주·대전·광주 데이터를 추가했습니다.
+- 도시별 날씨 아이콘(`emoji`)을 추가해 상태를 빠르게 구분할 수 있도록 했습니다.
+- 기온과 날씨 상태 외에 습도(`humidity`)와 풍속(`wind`)을 카드에 표시했습니다.
+- 기온 구간을 더움·선선함·추움의 세 단계로 확장했습니다.
 
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
+## 추가 기능
 
-## Customize configuration
+- 입력한 한글이 포함된 도시만 카드 목록에 표시되는 부분 일치 검색을 구현했습니다.
+- 현재 검색 결과 개수를 검색 영역에 표시했습니다.
+- 초기화 버튼으로 검색어와 카드 목록을 한 번에 원래 상태로 되돌릴 수 있습니다.
+- 검색 결과가 없을 때 `일치하는 도시가 없습니다.` 안내 문구를 표시합니다.
+- 카드에 키보드 포커스를 지원하고 Enter 또는 Space 키로 도시를 선택할 수 있습니다.
 
-See [Vite Configuration Reference](https://vite.dev/config/).
+## Mockup UI
 
-## Project Setup
+- 검색 영역, 날씨 목록, 상태바를 구분된 카드 형태로 구성했습니다.
+- 날씨 카드에 아이콘, 기온, 습도, 풍속, 기온별 색상 배지를 배치했습니다.
+- 카드 hover·focus 효과와 모바일 반응형 레이아웃을 적용했습니다.
+- 데스크톱 화면에서는 최대 1100px 너비를 사용하도록 확장했습니다.
+- 컴포넌트 전용 스타일은 `WeatherMockup.vue`의 `<style scoped>`에 작성했습니다.
 
-```sh
-npm install
-```
+## 구현 파일
 
-### Compile and Hot-Reload for Development
-
-```sh
-npm run dev
-```
-
-### Compile and Minify for Production
-
-```sh
-npm run build
-```
-
-### Lint with [ESLint](https://eslint.org/)
-
-```sh
-npm run lint
-```
+- `src/components/practices/handson/WeatherMockup.vue`
+- `src/App.vue`
