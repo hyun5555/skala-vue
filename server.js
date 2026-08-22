@@ -1,4 +1,3 @@
-import http from 'node:http'
 import axios from 'axios'
 import { createLocationId, parseLocationId } from './server-utils.js'
 
@@ -13,22 +12,27 @@ const cities = [
 
 const weatherClient = axios.create({
   baseURL: 'https://api.openweathermap.org/data/2.5',
+  adapter: 'fetch',
   timeout: 8000,
 })
 const airClient = axios.create({
   baseURL: 'https://air-quality-api.open-meteo.com/v1',
+  adapter: 'fetch',
   timeout: 8000,
 })
 const forecastClient = axios.create({
   baseURL: 'https://api.open-meteo.com/v1',
+  adapter: 'fetch',
   timeout: 8000,
 })
 const geocodingClient = axios.create({
   baseURL: 'https://api.openweathermap.org/geo/1.0',
+  adapter: 'fetch',
   timeout: 8000,
 })
 const kakaoClient = axios.create({
   baseURL: 'https://dapi.kakao.com/v2/local/search',
+  adapter: 'fetch',
   timeout: 8000,
 })
 
@@ -72,23 +76,23 @@ const toWeather = (city, data, airQuality) => ({
   updatedAt: data.dt * 1000,
 })
 
-const getCurrentWeather = (city) =>
+const getCurrentWeather = (city, env) =>
   weatherClient.get('/weather', {
     params: {
       lat: city.lat,
       lon: city.lon,
-      appid: process.env.OPENWEATHER_API_KEY,
+      appid: env.OPENWEATHER_API_KEY,
       units: 'metric',
       lang: 'kr',
     },
   })
 
-const searchKoreanLocations = async (query) => {
+const searchKoreanLocations = async (query, env) => {
   const { data } = await geocodingClient.get('/direct', {
     params: {
       q: `${query},KR`,
       limit: 5,
-      appid: process.env.OPENWEATHER_API_KEY,
+      appid: env.OPENWEATHER_API_KEY,
     },
   })
   return [
@@ -124,12 +128,12 @@ const getAirQuality = async (selectedCities) => {
   }
 }
 
-const getDailyForecast = async (city) => {
+const getDailyForecast = async (city, env) => {
   const { data } = await weatherClient.get('/forecast', {
     params: {
       lat: city.lat,
       lon: city.lon,
-      appid: process.env.OPENWEATHER_API_KEY,
+      appid: env.OPENWEATHER_API_KEY,
       units: 'metric',
       lang: 'kr',
     },
@@ -176,7 +180,7 @@ const getBreeds = () => {
   breedsPromise ??= axios
     .get(
       'https://gist.githubusercontent.com/arturschaefer/abf8f94bcff14ace1b88c7977d651a74/raw/breed_list.json',
-      { timeout: 8000 },
+      { adapter: 'fetch', timeout: 8000 },
     )
     .then(({ data }) =>
       data.map((breed) => ({
@@ -194,11 +198,11 @@ const getBreeds = () => {
   return breedsPromise
 }
 
-const getNearbyPetPlaces = async (lat, lon) => {
+const getNearbyPetPlaces = async (lat, lon, env) => {
   const responses = await Promise.all(
     ['애견동반 식당', '애견동반 카페', '반려동물 동반 카페'].map((query) =>
       kakaoClient.get('/keyword.json', {
-        headers: { Authorization: `KakaoAK ${process.env.KAKAO_REST_API_KEY}` },
+        headers: { Authorization: `KakaoAK ${env.KAKAO_REST_API_KEY}` },
         params: { query, x: lon, y: lat, radius: 2000, sort: 'distance', size: 15 },
       }),
     ),
@@ -212,103 +216,96 @@ const getNearbyPetPlaces = async (lat, lon) => {
     .slice(0, 15)
 }
 
-const sendJson = (response, status, body) => {
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
-  response.end(JSON.stringify(body))
-}
+const json = (body, status = 200) => Response.json(body, { status })
 
-http
-  .createServer(async (request, response) => {
-    const url = new URL(request.url, 'http://localhost')
-    const path = url.pathname
-    try {
-      if (request.method === 'GET' && path === '/api/breeds') {
-        return sendJson(response, 200, await getBreeds())
+export const handleRequest = async (request, env) => {
+  const url = new URL(request.url)
+  const path = url.pathname
+  try {
+    if (request.method === 'GET' && path === '/api/breeds') {
+      return json(await getBreeds())
+    }
+
+    if (request.method === 'GET' && path === '/api/places') {
+      if (!env.KAKAO_REST_API_KEY) {
+        return json({ message: 'KAKAO_REST_API_KEY가 설정되지 않았습니다.' }, 500)
       }
-
-      if (request.method === 'GET' && path === '/api/places') {
-        if (!process.env.KAKAO_REST_API_KEY) {
-          return sendJson(response, 500, { message: 'KAKAO_REST_API_KEY가 설정되지 않았습니다.' })
-        }
-        const lat = Number(url.searchParams.get('lat'))
-        const lon = Number(url.searchParams.get('lon'))
-        if (
-          !url.searchParams.has('lat') ||
-          !url.searchParams.has('lon') ||
-          !Number.isFinite(lat) ||
-          !Number.isFinite(lon) ||
-          Math.abs(lat) > 90 ||
-          Math.abs(lon) > 180
-        ) {
-          return sendJson(response, 400, { message: '올바른 위도와 경도를 입력해 주세요.' })
-        }
-        return sendJson(response, 200, await getNearbyPetPlaces(lat, lon))
+      const lat = Number(url.searchParams.get('lat'))
+      const lon = Number(url.searchParams.get('lon'))
+      if (
+        !url.searchParams.has('lat') ||
+        !url.searchParams.has('lon') ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lon) ||
+        Math.abs(lat) > 90 ||
+        Math.abs(lon) > 180
+      ) {
+        return json({ message: '올바른 위도와 경도를 입력해 주세요.' }, 400)
       }
+      return json(await getNearbyPetPlaces(lat, lon, env))
+    }
 
-      if (path.startsWith('/api/weather') && !process.env.OPENWEATHER_API_KEY) {
-        return sendJson(response, 500, { message: 'OPENWEATHER_API_KEY가 설정되지 않았습니다.' })
+    if (path.startsWith('/api/weather') && !env.OPENWEATHER_API_KEY) {
+      return json({ message: 'OPENWEATHER_API_KEY가 설정되지 않았습니다.' }, 500)
+    }
+
+    if (request.method === 'GET' && path === '/api/weather') {
+      const [weatherResponses, airQuality] = await Promise.all([
+        Promise.all(cities.map((city) => getCurrentWeather(city, env))),
+        getAirQuality(cities),
+      ])
+      return json(
+        weatherResponses.map(({ data }, index) =>
+          toWeather(cities[index], data, airQuality[index]),
+        ),
+      )
+    }
+
+    if (request.method === 'GET' && path === '/api/weather/search') {
+      const query = url.searchParams.get('q')?.trim() ?? ''
+      if (!query || query.length > 40) {
+        return json({ message: '1~40자의 국내 지역명을 입력해 주세요.' }, 400)
       }
+      const locations = await searchKoreanLocations(query, env)
+      if (!locations.length) return json([])
+      const [weatherResponses, airQuality] = await Promise.all([
+        Promise.all(locations.map((city) => getCurrentWeather(city, env))),
+        getAirQuality(locations),
+      ])
+      return json(
+        weatherResponses.map(({ data }, index) =>
+          toWeather(locations[index], data, airQuality[index]),
+        ),
+      )
+    }
 
-      if (request.method === 'GET' && path === '/api/weather') {
-        const [weatherResponses, airQuality] = await Promise.all([
-          Promise.all(cities.map(getCurrentWeather)),
-          getAirQuality(cities),
-        ])
-        return sendJson(
-          response,
-          200,
-          weatherResponses.map(({ data }, index) =>
-            toWeather(cities[index], data, airQuality[index]),
-          ),
-        )
-      }
+    const cityId = path.match(/^\/api\/weather\/([A-Za-z0-9_-]+)$/)?.[1]
+    const city = cities.find(({ id }) => id === cityId) ?? parseLocationId(cityId)
+    if (request.method === 'GET' && city) {
+      const [{ data }, [airQuality], forecast, hourly] = await Promise.all([
+        getCurrentWeather(city, env),
+        getAirQuality([city]),
+        getDailyForecast(city, env),
+        getHourlyForecast(city),
+      ])
+      return json({
+        ...toWeather(city, data, airQuality),
+        rainChance: hourly[0]?.rainChance ?? 0,
+        forecast,
+        hourly: hourly.map((slot) => ({
+          ...slot,
+          airQuality: airQuality ? { ...airQuality, uv_index: slot.uvIndex } : null,
+        })),
+      })
+    }
 
-      if (request.method === 'GET' && path === '/api/weather/search') {
-        const query = url.searchParams.get('q')?.trim() ?? ''
-        if (!query || query.length > 40) {
-          return sendJson(response, 400, { message: '1~40자의 국내 지역명을 입력해 주세요.' })
-        }
-        const locations = await searchKoreanLocations(query)
-        if (!locations.length) return sendJson(response, 200, [])
-        const [weatherResponses, airQuality] = await Promise.all([
-          Promise.all(locations.map(getCurrentWeather)),
-          getAirQuality(locations),
-        ])
-        return sendJson(
-          response,
-          200,
-          weatherResponses.map(({ data }, index) =>
-            toWeather(locations[index], data, airQuality[index]),
-          ),
-        )
-      }
-
-      const cityId = path.match(/^\/api\/weather\/([A-Za-z0-9_-]+)$/)?.[1]
-      const city = cities.find(({ id }) => id === cityId) ?? parseLocationId(cityId)
-      if (request.method === 'GET' && city) {
-        const [{ data }, [airQuality], forecast, hourly] = await Promise.all([
-          getCurrentWeather(city),
-          getAirQuality([city]),
-          getDailyForecast(city),
-          getHourlyForecast(city),
-        ])
-        return sendJson(response, 200, {
-          ...toWeather(city, data, airQuality),
-          rainChance: hourly[0]?.rainChance ?? 0,
-          forecast,
-          hourly: hourly.map((slot) => ({
-            ...slot,
-            airQuality: airQuality ? { ...airQuality, uv_index: slot.uvIndex } : null,
-          })),
-        })
-      }
-
-      return sendJson(response, 404, { message: '요청한 날씨 API를 찾을 수 없습니다.' })
-    } catch (error) {
-      console.error(error.response?.data ?? error.message)
-      const invalidKey = error.response?.status === 401
-      const kakaoMapDisabled = path === '/api/places' && error.response?.status === 403
-      return sendJson(response, invalidKey || kakaoMapDisabled ? 502 : 503, {
+    return json({ message: '요청한 날씨 API를 찾을 수 없습니다.' }, 404)
+  } catch (error) {
+    console.error(error.response?.data ?? error.message)
+    const invalidKey = error.response?.status === 401
+    const kakaoMapDisabled = path === '/api/places' && error.response?.status === 403
+    return json(
+      {
         message:
           path === '/api/places'
             ? kakaoMapDisabled
@@ -321,9 +318,10 @@ http
               : invalidKey
                 ? 'OpenWeatherMap API 키가 유효하지 않거나 아직 활성화되지 않았습니다.'
                 : '외부 날씨 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.',
-      })
-    }
-  })
-  .listen(process.env.PORT || 3001, () =>
-    console.log(`Weather API server: http://localhost:${process.env.PORT || 3001}`),
-  )
+      },
+      invalidKey || kakaoMapDisabled ? 502 : 503,
+    )
+  }
+}
+
+export default { fetch: handleRequest }

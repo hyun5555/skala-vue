@@ -6,11 +6,11 @@
   "scripts": {
     "dev": "run-p dev:server dev:client",
     "dev:client": "vite",
-    "dev:server": "node --watch --env-file=.env.local server.js",
+    "dev:server": "node --watch --env-file=.env.local node-server.js",
     "build": "vite build",
     "test": "node --test",
     "preview": "vite preview",
-    "server": "node --env-file=.env.local server.js",
+    "server": "node --env-file=.env.local node-server.js",
     "lint": "run-s lint:*",
     "lint:oxlint": "oxlint . --fix",
     "lint:eslint": "eslint . --fix --cache",
@@ -27,7 +27,9 @@
     "vue-router": "^5.0.4"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.37.1",
     "@eslint/js": "^10.0.1",
+    "@openai/sites-vite-plugin": "^0.1.0",
     "@vitejs/plugin-vue": "^6.0.6",
     "eslint": "^10.2.1",
     "eslint-config-prettier": "^10.1.8",
