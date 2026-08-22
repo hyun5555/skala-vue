@@ -14,6 +14,11 @@ const router = createRouter({
       component: () => import('../views/WeatherAboutView.vue'),
     },
     {
+      path: '/dog-walk',
+      name: 'dog-walk',
+      component: () => import('../views/DogWalkView.vue'),
+    },
+    {
       path: '/weather/:cityId',
       name: 'weather-detail',
       component: () => import('../views/WeatherDetailView.vue'),

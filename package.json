@@ -4,17 +4,26 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "run-p dev:server dev:client",
+    "dev:client": "vite",
+    "dev:server": "node --watch --env-file=.env.local server.js",
     "build": "vite build",
+    "test": "node --test",
     "preview": "vite preview",
+    "server": "node --env-file=.env.local server.js",
     "lint": "run-s lint:*",
     "lint:oxlint": "oxlint . --fix",
     "lint:eslint": "eslint . --fix --cache",
     "format": "prettier --write --experimental-cli src/"
   },
   "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "axios": "^1.19.0",
+    "echarts": "^6.1.0",
+    "element-plus": "^2.14.4",
     "pinia": "^3.0.4",
     "vue": "^3.5.32",
+    "vue-echarts": "^8.1.0",
     "vue-router": "^5.0.4"
   },
   "devDependencies": {

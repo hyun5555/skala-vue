@@ -27,11 +27,6 @@
 - 데스크톱 화면에서는 최대 1100px 너비를 사용하도록 확장했습니다.
 - 컴포넌트 전용 스타일은 `WeatherMockup.vue`의 `<style scoped>`에 작성했습니다.
 
-## 구현 파일
-
-- `src/components/practices/handson/WeatherMockup.vue`
-- `src/App.vue`
-
 # Vue.js 3일차
 
 # 과제2: 날씨 Composition API 진행 사항
@@ -79,11 +74,6 @@
 - `WeatherMockup.vue`와 동일한 화면 너비, 카드, 검색 영역 스타일을 적용했습니다.
 - 560px 이하에서 검색 컨트롤과 날씨 카드가 세로로 배치되도록 반응형 레이아웃을 적용했습니다.
 
-## 구현 파일
-
-- `src/components/practices/handson/WeatherComposition.vue`
-- `src/App.vue`
-
 # 과제3: 날씨 Component 분리
 
 `WeatherComposition.vue`의 기능은 유지하면서 부모·자식 통신과 slot을 사용하는 컴포넌트 구조로 분리했습니다.
@@ -125,45 +115,30 @@
 - 공통 대시보드 카드, 검색바, 날씨 카드, 강아지 산책 가이드의 스타일을 각 컴포넌트의 `<style scoped>`로 분리했습니다.
 - `WeatherParent.vue`에는 외출 리포트와 상태바처럼 부모가 직접 렌더링하는 영역의 스타일만 두었습니다.
 
-## 구현 파일
-
-- `src/components/practices/handson/weather-components/WeatherParent.vue`
-- `src/components/practices/handson/weather-components/BaseDashboardCard.vue`
-- `src/components/practices/handson/weather-components/SearchBar.vue`
-- `src/components/practices/handson/weather-components/WeatheCard.vue`
-- `src/components/practices/handson/weather-components/DogWalkGuide.vue`
-- `src/App.vue`
-
 # Vue.js 4일차
 
 # 과제4: Weather Router 적용
 
 기존 `WeatherParent`와 분리된 날씨 컴포넌트를 Vue Router 기반의 페이지 구조로 전환했습니다.
 
-## 과제 요구사항 수행 확인
+## Router 적용 내용
 
-| 요구사항 | 구현 내용 | 완료 |
-| --- | --- | :---: |
-| Vue Router 설정 | `main.js`에서 `app.use(router)`로 라우터를 전역 등록했습니다. | ✅ |
-| 라우터 지연 로딩 | 모든 View를 `() => import(...)` 방식으로 불러오도록 구성했습니다. | ✅ |
-| Catch-all Route | `/:pathMatch(.*)*` 경로를 `NotFoundView`와 연결했습니다. | ✅ |
-| App.vue 구성 | `RouterLink` 내비게이션 바와 메인 콘텐츠 영역의 `RouterView`를 배치했습니다. | ✅ |
-| WeatherHomeView | `/` 경로에서 기존 `WeatherParent`와 날씨 하위 컴포넌트를 재사용하도록 작성했습니다. | ✅ |
-| Programmatic Navigation | 상세보기의 `window.alert()`를 제거하고 `router.push('/weather/' + city.id)`로 이동하도록 변경했습니다. | ✅ |
-| 동적 상세 경로 | `/weather/:cityId`로 도시 ID를 전달하고 상세 화면을 표시합니다. | ✅ |
-| 상세 Mock Data | Mount 시점에 `route.params.cityId`로 6개 도시 Mock Data 중 해당 도시를 선택합니다. | ✅ |
-| WeatherAboutView | 서비스 소개와 메인 대시보드 복귀 링크를 작성했습니다. | ✅ |
-| 추가 View | `WeatherTipsView`를 `/tips` 경로에 연결했습니다. | ✅ |
+- `main.js`에서 `app.use(router)`를 호출해 Vue Router를 전역으로 등록했습니다.
+- 각 View는 `() => import(...)` 방식으로 불러오도록 작성해 페이지별로 지연 로딩됩니다.
+- 정의되지 않은 주소는 `/:pathMatch(.*)*` 경로에서 `NotFoundView`로 처리합니다.
+- `App.vue`에는 `RouterLink`로 만든 내비게이션과 현재 페이지를 표시하는 `RouterView`를 배치했습니다.
+- `/` 경로의 `WeatherHomeView`에서는 기존 `WeatherParent`와 하위 날씨 컴포넌트를 그대로 재사용했습니다.
+- 날씨 카드의 상세보기는 alert 대신 `router.push()`를 사용해 해당 도시의 상세 화면으로 이동합니다.
+- 상세 페이지는 `/weather/:cityId` 형태의 동적 경로를 사용하고, `route.params.cityId`로 선택한 도시를 찾습니다.
+- 서비스 소개는 `WeatherAboutView`, 날씨별 생활 팁은 `WeatherTipsView`로 분리했습니다.
 
 ## 라우팅 구조
 
-| 경로 | View | 역할 |
-| --- | --- | --- |
-| `/` | `WeatherHomeView.vue` | 날씨 검색 및 지역별 대시보드 |
-| `/weather/:cityId` | `WeatherDetailView.vue` | 도시 ID에 해당하는 상세 기상관측 정보 |
-| `/about` | `WeatherAboutView.vue` | 서비스 소개 |
-| `/tips` | `WeatherTipsView.vue` | 날씨별 생활 팁을 제공하는 추가 화면 |
-| `/:pathMatch(.*)*` | `NotFoundView.vue` | 정의되지 않은 경로의 404 안내 |
+- `/`은 `WeatherHomeView.vue`와 연결되며 날씨 검색과 지역별 대시보드를 보여줍니다.
+- `/dog-walk`은 `DogWalkView.vue`와 연결되며 강아지 맞춤 산책 분석과 주변 장소를 보여줍니다.
+- `/weather/:cityId`는 `WeatherDetailView.vue`에서 선택한 도시의 상세 날씨를 표시합니다.
+- `/about`과 `/tips`는 각각 서비스 소개와 날씨별 생활 팁 화면으로 연결됩니다.
+- 나머지 주소는 `NotFoundView.vue`에서 404 안내를 표시합니다.
 
 ## 추가 확장 기능
 
@@ -187,25 +162,139 @@
 - 내비게이션과 기존 날씨 카드·검색 영역에 모바일 반응형 레이아웃을 적용했습니다.
 - 내비게이션에 `aria-label`을 지정하고 기존 카드의 키보드 선택 및 상태 안내 접근성을 유지했습니다.
 
-## 구현 파일
-
-- `src/main.js`
-- `src/router/index.js`
-- `src/App.vue`
-- `src/views/WeatherHomeView.vue`
-- `src/views/WeatherDetailView.vue`
-- `src/views/WeatherAboutView.vue`
-- `src/views/WeatherTipsView.vue`
-- `src/views/NotFoundView.vue`
-- `src/components/practices/handson/weather-components/WeatherParent.vue`
-
-## 실행 및 확인
-
-```sh
-npm install
-npm run dev
-```
-
 - `npm run build`로 전체 View의 지연 로딩 청크 생성을 확인했습니다.
 - 브라우저에서 홈 → 서울 상세(`/weather/city_01`) 이동 시 alert 없이 상세 화면이 표시되는 것을 확인했습니다.
 - `/about`, `/tips`, 정의되지 않은 경로의 렌더링과 브라우저 오류가 없음을 확인했습니다.
+
+# 과제5: Pinia Weather Store 적용
+
+## Pinia 적용 내용
+
+- `main.js`에서 `app.use(createPinia())`를 호출해 Pinia를 전역으로 등록했습니다.
+- `configStore`에는 온도 단위를 저장하는 `unit` state와 현재 단위 기호를 반환하는 `unitSymbol` getter를 작성했습니다.
+- `toggleUnit` action으로 섭씨와 화씨를 바꿀 수 있으며, 내비게이션 옆의 `UnitToggler`에서 이 기능을 사용합니다.
+- 선택한 온도 단위는 도시 카드, 외출 리포트, 상세 날씨 화면에 동일하게 적용됩니다.
+- 온도를 정수 또는 소수점 첫째 자리로 표시할 수 있도록 `temperaturePrecision`과 관련 action을 추가했습니다.
+- 화면마다 온도 변환 코드를 반복하지 않도록 `formatTemperature`에서 단위 변환과 자릿수 처리를 함께 담당합니다.
+- 관심 도시 목록과 필터 상태는 별도의 `favoriteStore`에서 관리합니다.
+
+## 창의적 추가 기능: 관심 도시 모아보기
+
+- 각 날씨 카드와 상세 화면에서 도시를 관심 목록에 등록하거나 해제할 수 있습니다.
+- 검색 영역의 `관심 도시만 보기` 버튼으로 등록한 도시만 즉시 필터링합니다.
+- 관심 목록과 필터 상태는 Pinia의 `favoriteStore`에서 관리하므로 메인과 상세 화면이 같은 상태를 공유합니다.
+- 등록된 관심 도시 수를 버튼에 함께 표시합니다.
+
+## configStore 추가 기능: 온도 소수점 설정
+
+- `소수점 표시` 버튼으로 온도를 정수 또는 소수점 첫째 자리로 전환합니다.
+- `formatTemperature` action에서 섭씨·화씨 변환, 자릿수 처리, 단위 기호 결합을 한 번에 수행해 화면별 중복을 없앴습니다.
+- 외출·산책 지수 계산 기준은 원본 섭씨 데이터를 유지하고 화면에 표시할 때만 단위를 변환합니다.
+
+# 과제6: 외부 UI 라이브러리 및 API
+
+## 최신 UI 확장: 모던 산책 서비스 리뉴얼
+
+[Element Plus](https://element-plus.org/)와 [Element Plus Icons](https://element-plus.org/en-US/component/icon)를 사용하고, 산책·공원 이미지에 어울리는 포레스트 그린과 라임 컬러로 전체 UI를 다시 구성했습니다. 단순히 기본 컴포넌트를 나열하지 않고 실제 날씨 정보의 중요도에 맞게 화면 구조를 변경했습니다.
+
+### 외부 UI 라이브러리 적용
+
+- 전체 화면은 `ElContainer`, `ElHeader`, `ElMain`으로 구성했습니다. 데스크톱에서는 상단 메뉴를 사용하고 모바일에서는 하단 내비게이션이 나타납니다.
+- 온도 단위와 소수점 설정은 `ElPopover`, `ElButtonGroup`, `ElSwitch`를 사용한 설정 메뉴 안에 정리했습니다.
+- 메인 영역에는 `ElButton`, `ElProgress`, 아이콘 컴포넌트를 사용해 추천 도시의 산책 점수와 주요 날씨 정보를 먼저 보여줍니다.
+- 도시 검색 영역은 `ElInput`, `ElTooltip`, `ElButton`을 이용해 검색, 초기화, 관심 도시 기능을 한곳에서 사용할 수 있게 만들었습니다.
+- 도시별 날씨는 `ElCard`, `ElTag`, `ElProgress`로 구성하고 기온, 체감온도, 습도, 풍속, AQI를 한 카드에 담았습니다.
+- 강아지 맞춤 리포트에는 `ElCollapse`, `ElForm`, `ElSelect`, `ElInputNumber`를 사용해 프로필 입력과 위험 정보를 나누어 표시했습니다.
+- 시간대별 산책 점수는 Apache ECharts와 Vue ECharts로 표시하며, 각 시간의 강수확률과 UV 정보도 함께 확인할 수 있습니다.
+- 주변 동반 장소는 검색 상태에 따라 `ElSkeleton`, `ElAlert`, `ElEmpty`를 보여주고, 검색된 장소는 좌우로 넘길 수 있는 카드 목록으로 구성했습니다.
+- 상세 날씨, 안전 가이드, 서비스 소개, 404 화면도 Element Plus 컴포넌트를 사용해 같은 분위기로 맞췄습니다.
+
+`src/assets/base.css`에서 Element Plus의 CSS 변수를 서비스 컬러로 재정의했고, 980px과 640px 반응형 구간에서 카드 열 수, 버튼 배치, 헤더, 모바일 하단 메뉴가 전환됩니다.
+
+### 페이지 구조 리뉴얼
+
+긴 단일 대시보드를 기능별 4개 페이지로 분리하고, 흰색 바탕·얇은 녹색 테두리·연한 녹색 면을 사용하는 산책 서비스 UI로 통일했습니다.
+
+- `/`은 오늘 날씨 화면입니다. 산책 지수 요약과 전국 지역 검색, 도시별 날씨 카드를 표시합니다.
+- `/dog-walk`에서는 견종 프로필을 입력하고 맞춤 산책 플랜, 시간대 추천, 주변 펫 프렌들리 장소를 확인할 수 있습니다.
+- `/tips`에는 고온, 노면, 비, 한파, 대기질 상황별 행동 요령과 산책 체크리스트를 정리했습니다.
+- `/about`에서는 프로젝트 소개와 사용 기술, API 및 데이터 출처를 확인할 수 있습니다.
+
+- 홈에서 선택한 도시 ID를 `/dog-walk?city=...`로 전달해 같은 지역의 상세 맞춤 분석을 이어서 확인합니다.
+- 데스크톱은 상단 캡슐 내비게이션, 모바일은 4개 기능으로 분류된 하단 내비게이션을 사용합니다.
+- 강아지 페이지의 집→강아지→공원 경로 그래픽과 발자국 브랜드 마크로 산책 서비스의 성격을 강조했습니다.
+
+### API와 데이터 출처
+
+- [OpenWeatherMap Current Weather](https://openweathermap.org/api/current): 현재 기온, 체감온도, 습도, 풍속, 날씨 상태
+- [OpenWeatherMap 5 Day Forecast](https://openweathermap.org/api/forecast5): 5일/3시간 기상 예보
+- [Open-Meteo Forecast](https://open-meteo.com/en/docs): 시간대별 산책 추천에 사용하는 시간별 예보
+- [Open-Meteo Air Quality API](https://open-meteo.com/en/docs/air-quality-api): CAMS 기반 AQI, PM2.5, UV 정보
+- [Kakao Local REST API](https://developers.kakao.com/docs/ko/local/dev-guide): 현재 위치 중심 반려동물 동반 장소 검색
+- [The Dog API breeds list Gist](https://gist.github.com/arturschaefer/abf8f94bcff14ace1b88c7977d651a74): 견종 이름, 그룹, 체중 데이터
+
+### 전국 지역 날씨 검색
+
+- 초기 화면은 서울·수원·부산·제주·대전·광주 추천 카드를 빠르게 표시합니다.
+- 목록에 없는 국내 시·군·구를 입력하면 0.5초 디바운스 후 OpenWeatherMap Geocoding API로 좌표를 검색합니다.
+- 검색된 국내 좌표로 현재 날씨와 Open-Meteo 대기질을 조회해 동일한 날씨 카드를 동적으로 생성합니다.
+- 동적 카드도 선택, 관심 지역 등록, 산책 지수, 견종별 체감온도, 시간대별 추천, 5일 상세 예보를 지원합니다.
+- `GET /api/weather/search?q=강남구`에서 동적 지역 검색을 제공하며, API 키는 기존 날씨 API처럼 백엔드에서만 사용합니다.
+- 예시 검색어: `강남구`, `춘천`, `포항`, `전주시`, `해운대구`.
+
+## 최신 과제: Axios + 반려동물 날씨 서비스
+
+- Axios를 프론트엔드 API 호출과 Node 백엔드의 외부 API 호출에 적용했습니다.
+- OpenWeatherMap 현재 날씨 API로 서울·수원·부산·제주·대전·광주의 실제 관측값을 표시합니다.
+- OpenWeatherMap 5일/3시간 예보 API를 상세 화면의 5일 예보로 확장했습니다.
+- Open-Meteo의 AQI·PM2.5·UV와 24시간 예보를 산책 점수와 호흡기 안내에 반영했습니다.
+- OpenWeatherMap API Key는 브라우저에 노출되지 않도록 `.env.local`과 백엔드 프록시에서만 사용합니다.
+- 기온, 체감온도, 습도, 강수량·확률, 풍속, UV, 대기질을 조합한 산책 지수와 점수 근거를 제공합니다.
+- The Dog API 견종 목록을 이용한 강아지 프로필과 Kakao REST 현재 위치 기반 동반 장소 검색을 제공합니다.
+
+## 최신 확장: 맞춤 산책 지수와 내 주변 동반 장소
+
+### 오늘의 산책 지수와 위험 근거
+
+- 현재 기온·체감온도·습도·강수량·강수확률·풍속·UV·AQI를 0~100점으로 계산합니다.
+- 점수만 표시하지 않고 고온, 한파, 비, 강풍, 자외선, 미세먼지, 높은 습도 원인을 카드로 설명합니다.
+- 노면 온도를 측정값처럼 표시하지 않고 기온·UV·강수 조건으로 `노면 고온 위험`을 추정합니다.
+
+### 시간대별 BEST 산책 시간
+
+- Open-Meteo의 앞으로 24시간 예보를 시간대별 산책 지수로 가공합니다.
+- 3시간 간격의 점수·상태·강수확률·UV를 표로 보여주고, 24시간 중 최고 점수 시간을 추천합니다.
+
+### 강아지 프로필 기반 개인화
+
+- 이름, 견종, 나이, 몸무게, 털 길이, 활동량을 등록할 수 있습니다.
+- 제공된 [The Dog API breeds list](https://gist.github.com/arturschaefer/abf8f94bcff14ace1b88c7977d651a74)를 백엔드에서 불러옵니다.
+- 단두·북방 견종, 털 길이, 체중, 나이, 활동량을 반영해 견종별 체감온도 참고값과 맞춤 산책 점수를 계산합니다.
+- 프로필은 외부로 전송하지 않고 브라우저 `localStorage`에 저장합니다.
+- `프로필 초기화` 버튼으로 저장된 정보와 맞춤 산책 플랜을 삭제하고 기본 입력 상태로 돌아갈 수 있습니다.
+
+### 견종 기반 오늘의 종합 산책 플랜
+
+- 프로필 저장 즉시 견종 그룹과 일반적인 활동 성향, 나이, 몸무게, 털 길이, 활동량을 현재 날씨·시간별 예보와 함께 분석합니다.
+- `권장 1회 산책 시간`, `하루 권장 횟수`, `추천 강도`, `오늘 추천 시간대`를 하나의 맞춤 카드로 제공합니다.
+- 활동성이 높은 견종에는 걷기와 노즈워크를 함께 안내하고, 단두종·추운 기후 견종·성장기·노령견에는 날씨에 맞는 별도 주의사항을 표시합니다.
+- 모든 시간대의 맞춤 산책 점수가 낮으면 무리하게 BEST 시간을 표시하지 않고 `실내 활동`과 짧은 배변 산책을 권합니다.
+- 권장 시간은 건강 진단이나 처방이 아닌 일반적인 시작점입니다. 실제 운동량은 [AKC의 연령·견종·건강·날씨별 운동 안내](https://www.akc.org/expert-advice/health/how-much-exercise-does-dog-need/)와 [PDSA의 개별 운동량 안내](https://www.pdsa.org.uk/pet-help-and-advice/looking-after-your-pet/puppies-dogs/how-much-exercise-does-your-dog-need/)처럼 반려견의 상태에 따라 조절해야 합니다.
+
+이 플랜 UI에는 Element Plus의 `ElCard`, `ElTag`, `ElAlert`, `ElSpace`를 사용했습니다. 요약 정보는 반응형 CSS Grid로 배치해 데스크톱 4열, 모바일 2열로 전환됩니다.
+
+### Kakao REST 반려동물 동반 장소
+
+- 브라우저 위치 권한을 받은 뒤 현재 위치 반경 2km를 검색합니다.
+- 백엔드가 Kakao Local REST API로 애견 동반 식당·카페를 검색하고, 중복 제거 후 실제 거리순으로 표시합니다.
+- 가장 가까운 장소를 강조하고 거리, 주소, Kakao 상세 링크를 함께 제공합니다.
+- 장소 카드는 반응형 가로 슬라이더로 표시하며 이전·다음 버튼, 터치 스와이프, 키보드 가로 스크롤을 지원합니다.
+- 키워드 검색 결과이므로 실제 동반 가능 여부와 이용 조건은 방문 전에 매장에 확인해야 합니다.
+
+### 주요 구현 파일
+
+- `server.js`: 외부 날씨·예보·대기질·견종·Kakao 장소 검색 프록시
+- `src/services/petWeather.js`: 공용 산책 점수, 개인화, 위험 요소, BEST 시간 계산
+- `src/components/practices/handson/weather-components/DogWalkGuide.vue`: 산책 리포트, 시간대 표, 프로필
+- `src/components/PetPlacesMap.vue`: 위치 권한과 가까운 주변 장소 목록
+- `test/petWeather.test.js`: 산책 점수와 개인화 계산 검사
