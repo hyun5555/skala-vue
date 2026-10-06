@@ -7,7 +7,7 @@ http
   .createServer(async (request, response) => {
     try {
       const apiResponse = await handleRequest(
-        new Request(`http://${request.headers.host}${request.url}`, {
+        new Request(new URL(request.url, 'http://localhost'), {
           method: request.method,
           headers: request.headers,
         }),
@@ -15,10 +15,14 @@ http
       )
       response.writeHead(apiResponse.status, Object.fromEntries(apiResponse.headers))
       response.end(Buffer.from(await apiResponse.arrayBuffer()))
-    } catch (error) {
-      console.error(error)
-      response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' })
+    } catch {
+      console.error('API request failed.')
+      response.writeHead(500, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      })
       response.end(JSON.stringify({ message: 'API 서버 오류가 발생했습니다.' }))
     }
   })
-  .listen(port, () => console.log(`Weather API server: http://localhost:${port}`))
+  .listen(port, '127.0.0.1', () => console.log(`Weather API server: http://localhost:${port}`))

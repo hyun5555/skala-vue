@@ -1,10 +1,11 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { ref } from 'vue'
 import { ArrowLeft, ArrowRight, LocationFilled, Position } from '@element-plus/icons-vue'
 import { getNearbyPetPlaces } from '@/services/weatherApi.js'
 
 const places = ref([])
-const loading = ref(true)
+const loading = ref(false)
+const hasSearched = ref(false)
 const errorMessage = ref('')
 const placeSlider = ref(null)
 
@@ -27,6 +28,7 @@ const getCurrentPosition = () =>
   })
 
 const showPlaces = async () => {
+  hasSearched.value = true
   loading.value = true
   errorMessage.value = ''
   try {
@@ -41,8 +43,6 @@ const showPlaces = async () => {
     loading.value = false
   }
 }
-
-onMounted(showPlaces)
 </script>
 
 <template>
@@ -54,6 +54,9 @@ onMounted(showPlaces)
           <small>산책 후 들를 곳</small>
           <h2>내 주변 펫 프렌들리 스팟</h2>
           <p>Kakao 장소 검색으로 현재 위치 반경 2km의 동반 카페·식당을 가까운 순으로 찾아요.</p>
+          <p>
+            버튼을 누르면 현재 위치를 Kakao 장소 검색에 사용합니다. 위치는 앱에 저장하지 않습니다.
+          </p>
         </div>
       </div>
       <div class="heading-actions">
@@ -104,13 +107,25 @@ onMounted(showPlaces)
                 : `${place.distance}m`
             }}
           </strong>
-          <el-link :href="place.place_url" type="primary" target="_blank" rel="noopener noreferrer">
+          <el-link
+            :href="place.place_url"
+            :disabled="!place.place_url"
+            type="primary"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             장소 보기 <el-icon><ArrowRight /></el-icon>
           </el-link>
         </div>
       </el-card>
     </div>
-    <el-empty v-else-if="!errorMessage" description="주변 검색 결과가 없습니다." :image-size="88" />
+    <el-empty
+      v-else-if="!errorMessage"
+      :description="
+        hasSearched ? '주변 검색 결과가 없습니다.' : '내 위치로 찾기를 눌러 주변 장소를 확인하세요.'
+      "
+      :image-size="88"
+    />
 
     <el-alert
       class="notice"

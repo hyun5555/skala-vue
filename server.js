@@ -1,5 +1,10 @@
 import axios from 'axios'
-import { createLocationId, parseLocationId } from './server-utils.js'
+import {
+  createLocationId,
+  getKakaoPlaceUrl,
+  isKoreanCoordinate,
+  parseLocationId,
+} from './server-utils.js'
 
 const cities = [
   { id: 'city_01', name: '서울', lat: 37.5665, lon: 126.978 },
@@ -105,7 +110,10 @@ const searchKoreanLocations = async (query, env) => {
             lat: location.lat,
             lon: location.lon,
           }
-          return [`${city.lat.toFixed(4)},${city.lon.toFixed(4)}`, { ...city, id: createLocationId(city) }]
+          return [
+            `${city.lat.toFixed(4)},${city.lon.toFixed(4)}`,
+            { ...city, id: createLocationId(city) },
+          ]
         }),
     ).values(),
   ]
@@ -122,8 +130,8 @@ const getAirQuality = async (selectedCities) => {
       },
     })
     return (Array.isArray(data) ? data : [data]).map(({ current }) => current)
-  } catch (error) {
-    console.warn('Open-Meteo air quality unavailable:', error.message)
+  } catch {
+    console.warn('Open-Meteo air quality unavailable.')
     return selectedCities.map(() => null)
   }
 }
@@ -214,11 +222,27 @@ const getNearbyPetPlaces = async (lat, lon, env) => {
   ]
     .sort((a, b) => Number(a.distance) - Number(b.distance))
     .slice(0, 15)
+    .map((place) => ({ ...place, place_url: getKakaoPlaceUrl(place.id) }))
 }
 
-const json = (body, status = 200) => Response.json(body, { status })
+const json = (body, status = 200, headers = {}) =>
+  Response.json(body, {
+    status,
+    headers: {
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      ...headers,
+    },
+  })
 
 export const handleRequest = async (request, env) => {
+  if (request.method !== 'GET') {
+    return json({ message: 'GET 요청만 지원합니다.' }, 405, { Allow: 'GET' })
+  }
+  if (request.url.length > 2048) {
+    return json({ message: '요청 주소가 너무 깁니다.' }, 414)
+  }
   const url = new URL(request.url)
   const path = url.pathname
   try {
@@ -230,17 +254,12 @@ export const handleRequest = async (request, env) => {
       if (!env.KAKAO_REST_API_KEY) {
         return json({ message: 'KAKAO_REST_API_KEY가 설정되지 않았습니다.' }, 500)
       }
-      const lat = Number(url.searchParams.get('lat'))
-      const lon = Number(url.searchParams.get('lon'))
-      if (
-        !url.searchParams.has('lat') ||
-        !url.searchParams.has('lon') ||
-        !Number.isFinite(lat) ||
-        !Number.isFinite(lon) ||
-        Math.abs(lat) > 90 ||
-        Math.abs(lon) > 180
-      ) {
-        return json({ message: '올바른 위도와 경도를 입력해 주세요.' }, 400)
+      const latitude = url.searchParams.get('lat')?.trim()
+      const longitude = url.searchParams.get('lon')?.trim()
+      const lat = Number(latitude)
+      const lon = Number(longitude)
+      if (!latitude || !longitude || !isKoreanCoordinate(lat, lon)) {
+        return json({ message: '국내 지역의 올바른 위도와 경도를 입력해 주세요.' }, 400)
       }
       return json(await getNearbyPetPlaces(lat, lon, env))
     }
@@ -263,7 +282,7 @@ export const handleRequest = async (request, env) => {
 
     if (request.method === 'GET' && path === '/api/weather/search') {
       const query = url.searchParams.get('q')?.trim() ?? ''
-      if (!query || query.length > 40) {
+      if (!query || query.length > 40 || /\p{Cc}/u.test(query)) {
         return json({ message: '1~40자의 국내 지역명을 입력해 주세요.' }, 400)
       }
       const locations = await searchKoreanLocations(query, env)
@@ -301,7 +320,11 @@ export const handleRequest = async (request, env) => {
 
     return json({ message: '요청한 날씨 API를 찾을 수 없습니다.' }, 404)
   } catch (error) {
-    console.error(error.response?.data ?? error.message)
+    // Upstream error bodies and messages may contain API keys, tokens, or coordinates.
+    console.error('External API request failed:', {
+      service: path === '/api/places' ? 'places' : path === '/api/breeds' ? 'breeds' : 'weather',
+      status: Number.isInteger(error.response?.status) ? error.response.status : null,
+    })
     const invalidKey = error.response?.status === 401
     const kakaoMapDisabled = path === '/api/places' && error.response?.status === 403
     return json(

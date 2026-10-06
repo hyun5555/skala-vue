@@ -40,4 +40,35 @@ __screenshots__/
 .wrangler
 .dev.vars*
 .vercel
+
+# Environment secrets (only the empty setup example belongs in Git)
 .env*
+!.env.example
+
+# Local credentials and deployment authentication
+.npmrc
+.pypirc
+.aws/
+.azure/
+.gcloud/
+.ssh/
+.kube/
+secrets/
+.secrets/
+credentials/
+credentials.json
+*.credentials.json
+service-account*.json
+serviceAccount*.json
+*-service-account.json
+
+# Private keys, certificates, and signing keystores
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ecdsa*
+id_ed25519*

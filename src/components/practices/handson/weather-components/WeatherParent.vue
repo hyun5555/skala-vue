@@ -142,13 +142,19 @@ const dogWalkIndex = computed(() =>
   dogWalkWeather.value ? calculatePetWalkIndex(dogWalkWeather.value) : null,
 )
 
-watch(selectedCityInfo, (message) => console.log('📍 상태바 문구 변경:', message))
-watchEffect(() => console.log('🔍 도시 검색어:', searchQuery.value))
-watch(showOutingIndex, (visible) => console.log('🚶 외출 지수 표시:', visible ? '켜짐' : '꺼짐'))
-watch(outingIndex, (score, oldScore) => console.log('📊 외출 지수 변화:', oldScore, '→', score))
-watch(dogWalkIndex, (score, oldScore) =>
-  console.log('🐕 강아지 산책 지수 변화:', oldScore, '→', score),
-)
+if (import.meta.env.DEV) {
+  watch(selectedCityInfo, (message) => console.log('📍 상태바 문구 변경:', message))
+  watchEffect(() => console.log('🔍 도시 검색어:', searchQuery.value))
+  watch(showOutingIndex, (visible) => console.log('🚶 외출 지수 표시:', visible ? '켜짐' : '꺼짐'))
+  watch(outingIndex, (score, oldScore) => console.log('📊 외출 지수 변화:', oldScore, '→', score))
+  watch(dogWalkIndex, (score, oldScore) =>
+    console.log('🐕 강아지 산책 지수 변화:', oldScore, '→', score),
+  )
+  watch(
+    () => bestCity.value?.city.name,
+    (cityName) => console.log('🏆 추천 도시 변경:', cityName ?? '없음'),
+  )
+}
 
 let searchTimer
 let searchSequence = 0
@@ -185,10 +191,6 @@ watch(filteredWeatherList, (cities) => {
     selectedCityInfo.value = '검색 결과에서 추천 도시를 표시합니다.'
   }
 })
-watch(
-  () => bestCity.value?.city.name,
-  (cityName) => console.log('🏆 추천 도시 변경:', cityName ?? '없음'),
-)
 
 const selectCity = (city) => {
   selectedCityId.value = city.id
