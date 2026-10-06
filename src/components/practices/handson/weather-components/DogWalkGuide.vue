@@ -270,13 +270,14 @@ onUnmounted(() => clearInterval(clockTimer))
       <el-col :xs="24" :md="12">
         <el-card class="report-card" shadow="never">
           <el-tag :type="heatStatus.level === 'safe' ? 'success' : 'warning'" effect="light">
-            🐕 견종별 체감온도
+            🐕 {{ profileSaved ? '견종별 참고 체감온도' : '기상 체감온도' }}
           </el-tag>
           <strong>{{ formatWeatherTemperature(breedFeelsLike) }} · {{ heatStatus.label }}</strong>
-          <small>
+          <small v-if="profileSaved">
             기상 체감온도 {{ formatWeatherTemperature(city.feelsLike) }}에 견종·털 길이·체중을
             반영한 참고값입니다.
           </small>
+          <small v-else>저장한 프로필이 없어 기상 체감온도로 평가했어요.</small>
         </el-card>
       </el-col>
       <el-col :xs="24" :md="12">
