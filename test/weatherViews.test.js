@@ -26,17 +26,26 @@ const mountView = async (t, name) => {
   })
   const dir = mkdtempSync(join(tmpdir(), 'walkie-view-check-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
-  const file = new URL(`../src/views/${name}.vue`, import.meta.url)
+  const file = new URL(
+    name === 'WeatherParent'
+      ? '../src/components/practices/handson/weather-components/WeatherParent.vue'
+      : `../src/views/${name}.vue`,
+    import.meta.url,
+  )
   const apiPath = join(dir, 'api.mjs')
   writeFileSync(
     apiPath,
     `export const requests = [];
 export const getWeatherList = async () => [];
+export const searchWeatherLocations = async () => [];
 export const getWeatherDetail = (id) => new Promise((resolve,reject) => requests.push({id,resolve,reject}));`,
   )
   const apiUrl = pathToFileURL(apiPath).href
   const { descriptor } = parse(readFileSync(file, 'utf8'))
-  let source = compileScript(descriptor, { id: 'view-check' }).content
+  let source = compileScript(descriptor, { id: 'view-check' }).content.replaceAll(
+    'import.meta.env.DEV',
+    'false',
+  )
   source = source.replace(/from (['"])([^'"]+)\1/g, (_, quote, specifier) => {
     const url = specifier.endsWith('.vue')
       ? 'data:text/javascript,export default {}'
@@ -82,6 +91,38 @@ export const getWeatherDetail = (id) => new Promise((resolve,reject) => requests
   await settle()
   return { vm, requests, router, location, app }
 }
+
+test('홈 카드·지역 비교는 같은 평가를 쓰며 높은 점수의 위험 도시와 정보 부족을 추천하지 않는다', async (t) => {
+  const { vm } = await mountView(t, 'WeatherParent')
+  const weather = {
+    temp: 18,
+    feelsLike: 18,
+    humidity: 60,
+    wind: 2,
+    condition: 'Clear',
+    precipitation: 0,
+    uvIndex: 2,
+    airQuality: { us_aqi: 25 },
+  }
+  const safe = { ...weather, id: 'city_01', name: '서울', temp: 26, feelsLike: 26 }
+  const risk = { ...weather, id: 'city_02', name: '수원', airQuality: { us_aqi: 151 } }
+  const missing = { ...weather, id: 'city_03', name: '부산', uvIndex: null }
+  vm.weatherList = [risk, missing, safe]
+  await settle()
+  assert.deepEqual(
+    vm.filteredWeatherList.map((city) => city.walkAssessment.score),
+    [85, null, 82],
+  )
+  assert.equal(vm.bestCity.city.id, 'city_01')
+  assert.equal(vm.outingIndex, 82)
+  assert.equal(vm.dogWalkIndex, 82)
+  assert.match(vm.outingGuide, /주의/)
+  vm.weatherList = [risk, missing]
+  await settle()
+  assert.equal(vm.bestCity, null)
+  assert.equal(vm.outingIndex, null)
+  assert.match(vm.outingGuide, /추천 가능한 지역이 없/)
+})
 
 for (const name of ['DogWalkView', 'WeatherDetailView']) {
   test(`${name}: 지난 성공·실패·finally가 최신 지역과 로딩을 덮지 않는다`, async (t) => {
