@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowRight, LocationFilled, Refresh } from '@element-plus/icons-vue'
-import { calculatePetWalkIndex, getPetWalkGuide } from '@/services/petWeather.js'
+import { evaluateWalkWeather, formatWeatherMetric, getPetWalkGuide } from '@/services/petWeather.js'
 import { getWeatherList, searchWeatherLocations } from '@/services/weatherApi.js'
 import { useConfigStore } from '@/stores/configStore.js'
 import { useFavoriteStore } from '@/stores/favoriteStore.js'
@@ -25,21 +25,6 @@ const selectedCityInfo = ref('카드를 클릭해 도시를 선택해 보세요.
 const showOutingIndex = ref(false)
 const selectedCityId = ref(null)
 
-const calculateOutingIndex = ({ temp, humidity, wind, condition }) => {
-  let score = 100
-  if (['Rain', 'Drizzle', 'Thunderstorm', 'Snow'].includes(condition)) score -= 40
-  if (temp < 10 || temp > 28) score -= 20
-  if (humidity >= 70) score -= 15
-  if (wind >= 6) score -= 15
-  return score
-}
-
-const getOutingGuide = (score) => {
-  if (score >= 80) return '외출하기 매우 좋은 날씨예요!'
-  if (score >= 60) return '준비만 잘하면 외출하기 무난해요.'
-  return '날씨가 불편할 수 있으니 실내 일정을 추천해요.'
-}
-
 const getItemToBring = ({ temp, wind, condition }) => {
   if (['Rain', 'Drizzle', 'Thunderstorm', 'Snow'].includes(condition)) return '☔ 우산'
   if (temp < 10) return '🧥 따뜻한 외투'
@@ -57,6 +42,7 @@ const filteredWeatherList = computed(() => {
     )
     .map((city) => ({
       ...city,
+      walkAssessment: evaluateWalkWeather(city),
       displayTemp: configStore.formatTemperature(city.temp),
       displayFeelsLike: configStore.formatTemperature(city.feelsLike),
     }))
@@ -68,79 +54,30 @@ const selectedCity = computed(() =>
   ),
 )
 
-const averageTemperature = computed(() => {
-  if (!filteredWeatherList.value.length) return null
-  return (
-    filteredWeatherList.value.reduce((sum, city) => sum + city.temp, 0) /
-    filteredWeatherList.value.length
-  )
-})
-
-const averageWindSpeed = computed(() => {
-  if (!filteredWeatherList.value.length) return null
-  return (
-    filteredWeatherList.value.reduce((sum, city) => sum + city.wind, 0) /
-    filteredWeatherList.value.length
-  )
-})
-
-const averageHumidity = computed(() => {
-  if (!filteredWeatherList.value.length) return null
-  return (
-    filteredWeatherList.value.reduce((sum, city) => sum + city.humidity, 0) /
-    filteredWeatherList.value.length
-  )
-})
-
-const hasRainOrSnow = computed(() =>
-  filteredWeatherList.value.some((city) =>
-    ['Rain', 'Drizzle', 'Thunderstorm', 'Snow'].includes(city.condition),
-  ),
-)
-
-const outingIndex = computed(() => {
-  if (averageTemperature.value === null) return null
-  return calculateOutingIndex({
-    temp: averageTemperature.value,
-    humidity: averageHumidity.value,
-    wind: averageWindSpeed.value,
-    condition: hasRainOrSnow.value ? 'Rain' : 'Clear',
-  })
-})
-
-const outingGuide = computed(() =>
-  outingIndex.value === null ? '분석할 도시가 없어요.' : getOutingGuide(outingIndex.value),
-)
-
-const itemToBring = computed(() =>
-  outingIndex.value === null
-    ? '-'
-    : getItemToBring({
-        temp: averageTemperature.value,
-        wind: averageWindSpeed.value,
-        condition: hasRainOrSnow.value ? 'Rain' : 'Clear',
-      }),
-)
-
 const bestCity = computed(() =>
   filteredWeatherList.value.reduce((best, city) => {
-    const score = calculateOutingIndex(city)
-    return !best || score > best.score ? { city, score } : best
+    const assessment = city.walkAssessment
+    if (!assessment.eligible) return best
+    const score = assessment.score
+    return !best || score > best.score ? { city, score, assessment } : best
   }, null),
 )
-
-const bestDogWalkCity = computed(() =>
-  filteredWeatherList.value.reduce((best, city) => {
-    const score = calculatePetWalkIndex(city)
-    return !best || score > best.score ? { city, score } : best
-  }, null),
+const outingIndex = computed(() => bestCity.value?.score ?? null)
+const outingGuide = computed(() =>
+  bestCity.value
+    ? getPetWalkGuide(bestCity.value.assessment)
+    : '추천 가능한 지역이 없어요. 위험 조건이나 날씨 정보 부족을 확인해 주세요.',
 )
+const itemToBring = computed(() => (bestCity.value ? getItemToBring(bestCity.value.city) : '-'))
 
-const dogWalkTargetCity = computed(() => selectedCity.value ?? bestDogWalkCity.value?.city ?? null)
+const dogWalkTargetCity = computed(
+  () => selectedCity.value ?? bestCity.value?.city ?? filteredWeatherList.value[0] ?? null,
+)
 const dogWalkWeather = computed(() => dogWalkTargetCity.value)
-const dogWalkIndex = computed(() =>
-  dogWalkWeather.value ? calculatePetWalkIndex(dogWalkWeather.value) : null,
+const dogWalkAssessment = computed(() =>
+  dogWalkWeather.value ? evaluateWalkWeather(dogWalkWeather.value) : null,
 )
+const dogWalkIndex = computed(() => dogWalkAssessment.value?.score ?? null)
 
 if (import.meta.env.DEV) {
   watch(selectedCityInfo, (message) => console.log('📍 상태바 문구 변경:', message))
@@ -220,20 +157,22 @@ onBeforeUnmount(() => clearTimeout(searchTimer))
 
 <template>
   <div class="weather-parent">
-    <section v-if="dogWalkWeather && dogWalkIndex !== null" class="walk-hero">
+    <section v-if="dogWalkWeather" class="walk-hero">
       <div class="hero-copy">
         <div class="live-label"><i></i> LIVE WALKING WEATHER · {{ dogWalkWeather.name }}</div>
         <h1>
           오늘의 산책,<br />
           <span>{{
+            dogWalkAssessment.eligible &&
+            !dogWalkAssessment.cautionFlags.length &&
             dogWalkIndex >= 80
               ? '가볍게 출발해요.'
-              : dogWalkIndex >= 60
+              : dogWalkAssessment.eligible && dogWalkIndex >= 60
                 ? '짧게 다녀와요.'
                 : '잠시 쉬어가요.'
           }}</span>
         </h1>
-        <p>{{ getPetWalkGuide(dogWalkIndex) }}</p>
+        <p>{{ getPetWalkGuide(dogWalkAssessment) }}</p>
         <div class="hero-actions">
           <RouterLink :to="{ name: 'dog-walk', query: { city: dogWalkWeather.id } }">
             <el-button type="primary" size="large" round>
@@ -256,16 +195,12 @@ onBeforeUnmount(() => clearTimeout(searchTimer))
             ><strong>{{ configStore.formatTemperature(dogWalkWeather.feelsLike) }}</strong>
           </div>
           <div>
-            <small>습도</small><strong>{{ dogWalkWeather.humidity }}%</strong>
+            <small>습도</small
+            ><strong>{{ formatWeatherMetric(dogWalkWeather.humidity, '%') }}</strong>
           </div>
           <div>
             <small>대기질</small
-            ><strong
-              >AQI
-              {{
-                dogWalkWeather.airQuality ? Math.round(dogWalkWeather.airQuality.us_aqi) : '-'
-              }}</strong
-            >
+            ><strong>AQI {{ formatWeatherMetric(dogWalkWeather.airQuality?.us_aqi) }}</strong>
           </div>
         </div>
       </div>
@@ -273,15 +208,30 @@ onBeforeUnmount(() => clearTimeout(searchTimer))
       <div class="hero-score" aria-label="오늘의 산책 지수">
         <div class="score-top">
           <span>WALK SCORE</span>
-          <em>{{ dogWalkIndex >= 80 ? 'GOOD' : dogWalkIndex >= 60 ? 'CAREFUL' : 'REST' }}</em>
+          <em>{{
+            dogWalkIndex === null
+              ? '정보 부족'
+              : !dogWalkAssessment.eligible
+                ? '추천 제외'
+                : dogWalkAssessment.cautionFlags.length || dogWalkIndex < 80
+                  ? '주의'
+                  : '쾌적'
+          }}</em>
         </div>
-        <strong>{{ dogWalkIndex }}</strong>
+        <strong>{{ dogWalkIndex === null ? '정보 부족' : dogWalkIndex }}</strong>
         <small>/ 100</small>
         <el-progress
+          v-if="dogWalkIndex !== null"
           :percentage="dogWalkIndex"
           :show-text="false"
           :stroke-width="10"
-          :status="dogWalkIndex >= 80 ? 'success' : dogWalkIndex >= 60 ? 'warning' : 'exception'"
+          :status="
+            !dogWalkAssessment.eligible
+              ? 'exception'
+              : dogWalkAssessment.cautionFlags.length || dogWalkIndex < 80
+                ? 'warning'
+                : 'success'
+          "
         />
         <div class="trail-art" aria-hidden="true">
           <span>🌲</span><span>🐕</span><i></i><span>🌿</span>
@@ -325,16 +275,17 @@ onBeforeUnmount(() => clearTimeout(searchTimer))
         aria-live="polite"
       >
         <div class="outing-heading">
-          <strong>검색 지역 외출 리포트</strong>
+          <strong>검색 지역 산책 비교</strong>
           <span>
-            평균 {{ configStore.formatTemperature(averageTemperature) }} · 습도
-            {{ averageHumidity.toFixed(0) }}% · 풍속 {{ averageWindSpeed.toFixed(1) }}m/s
+            {{ bestCity.city.name }} · 체감
+            {{ configStore.formatTemperature(bestCity.city.feelsLike) }} · 습도
+            {{ bestCity.city.humidity }}% · 풍속 {{ bestCity.city.wind }}m/s
           </span>
         </div>
         <el-row :gutter="12">
           <el-col :xs="24" :md="8">
             <el-card class="outing-result" shadow="never">
-              <el-statistic title="🚶 오늘의 외출 지수" :value="outingIndex" suffix="점" />
+              <el-statistic title="🐕 최고 산책 지수" :value="outingIndex" suffix="점" />
               <p>{{ outingGuide }}</p>
             </el-card>
           </el-col>
@@ -349,7 +300,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer))
             <el-card class="outing-result" shadow="never">
               <span class="result-label">🏆 최고 추천 도시</span>
               <strong>{{ bestCity.city.name }}</strong>
-              <p>외출 지수 {{ bestCity.score }}점</p>
+              <p>산책 지수 {{ bestCity.score }}점</p>
             </el-card>
           </el-col>
         </el-row>
@@ -384,8 +335,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer))
           :key="city.id"
           :city="city"
           :selected="selectedCityId === city.id"
-          :outing-index="calculateOutingIndex(city)"
-          :outing-guide="getOutingGuide(calculateOutingIndex(city))"
+          :assessment="city.walkAssessment"
           :item-to-bring="getItemToBring(city)"
           :favorite="favoriteStore.favoriteCityIds.includes(city.id)"
           @select-card="selectCity"

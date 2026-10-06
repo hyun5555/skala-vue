@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, useId } from 'vue'
 import { use } from 'echarts/core'
 import { BarChart } from 'echarts/charts'
 import {
@@ -11,9 +11,9 @@ import {
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
 import {
-  calculatePersonalizedWalkIndex,
+  evaluateWalkWeather,
+  formatWeatherMetric as formatMetric,
   getBestWalkTime,
-  getBreedFeelsLike,
   getDogHeatStatus,
   getPetWalkGuide,
   getPersonalizedWalkPlan,
@@ -21,12 +21,16 @@ import {
 } from '@/services/petWeather.js'
 import { getDogBreeds } from '@/services/weatherApi.js'
 import { useConfigStore } from '@/stores/configStore.js'
+import {
+  emptyPetProfile,
+  usePetProfileStore,
+  validatePetProfile,
+} from '@/stores/petProfileStore.js'
 
 use([CanvasRenderer, BarChart, GridComponent, TooltipComponent, MarkLineComponent, AriaComponent])
 
 const props = defineProps({
   city: { type: Object, required: true },
-  score: { type: Number, required: true },
   selected: Boolean,
   careTips: { type: Array, default: () => [] },
 })
@@ -34,70 +38,140 @@ const props = defineProps({
 defineEmits(['reset-city'])
 
 const configStore = useConfigStore()
+const petProfileStore = usePetProfileStore()
 const breeds = ref([])
 const breedError = ref('')
-const emptyProfile = () => ({
-  name: '',
-  breedName: '',
-  age: 3,
-  weight: 5,
-  coatLength: 'short',
-  activity: 'normal',
-})
-let savedProfile = null
-try {
-  savedProfile = JSON.parse(localStorage.getItem('petWeatherProfile') ?? 'null')
-} catch {
-  localStorage.removeItem('petWeatherProfile')
-}
-const profile = ref(savedProfile ?? emptyProfile())
-const profileSaved = ref(Boolean(savedProfile?.name && savedProfile?.breedName))
+const profile = computed(() => petProfileStore.savedProfile ?? emptyPetProfile())
+const profileSaved = computed(() => petProfileStore.hasProfile)
+const draft = ref({ ...profile.value })
+const validDraft = computed(() => validatePetProfile(draft.value) !== null)
 const profilePanels = ref(profileSaved.value ? [] : ['profile'])
+const profileStatus = ref('')
+const availability = ref('all')
+const durationMinutes = ref(30)
+const startTime = ref('07:00')
+const endTime = ref('21:00')
+const nowMs = ref(Date.now())
+const selectedSlotTime = ref('')
+const timeInputId = useId()
+let clockTimer
 
-const analysis = computed(() => getWalkAnalysis(props.city))
-const breedFeelsLike = computed(() => getBreedFeelsLike(props.city, profile.value))
-const heatStatus = computed(() => getDogHeatStatus(breedFeelsLike.value))
-const personalizedScore = computed(() =>
-  profileSaved.value ? calculatePersonalizedWalkIndex(props.city, profile.value) : props.score,
+const settingsError = computed(() => {
+  if (availability.value !== 'custom') return ''
+  if (!startTime.value || !endTime.value)
+    return '산책 가능한 시작 시각과 종료 시각을 모두 입력해 주세요.'
+  if (startTime.value === endTime.value) return '시작 시각과 종료 시각을 다르게 설정해 주세요.'
+  return ''
+})
+const walkOptions = computed(() => ({
+  now: nowMs.value,
+  availability: availability.value,
+  startTime: startTime.value,
+  endTime: endTime.value,
+  durationMinutes: durationMinutes.value,
+}))
+
+const assessment = computed(() =>
+  evaluateWalkWeather(props.city, profileSaved.value ? profile.value : null, {
+    source: 'observation',
+  }),
 )
+const analysis = computed(() =>
+  getWalkAnalysis(props.city, profileSaved.value ? profile.value : null, assessment.value),
+)
+const breedFeelsLike = computed(() => assessment.value.feelsLike)
+const heatStatus = computed(() => getDogHeatStatus(breedFeelsLike.value))
+const personalizedScore = computed(() => assessment.value.score)
 const progressStatus = computed(() => {
-  if (personalizedScore.value >= 80) return 'success'
+  if (!assessment.value.eligible) return 'exception'
+  if (
+    assessment.value.eligible &&
+    !assessment.value.cautionFlags.length &&
+    personalizedScore.value >= 80
+  )
+    return 'success'
   if (personalizedScore.value >= 60) return 'warning'
   return 'exception'
 })
 const walkTimes = computed(() =>
-  getBestWalkTime(props.city.hourly, profileSaved.value ? profile.value : null),
+  settingsError.value
+    ? { slots: [], best: null, groups: [], message: settingsError.value }
+    : getBestWalkTime(
+        props.city.hourly,
+        profileSaved.value ? profile.value : null,
+        walkOptions.value,
+      ),
+)
+const selectedSlot = computed(
+  () =>
+    walkTimes.value.slots.find(({ time }) => time === selectedSlotTime.value) ??
+    walkTimes.value.best ??
+    walkTimes.value.slots[0] ??
+    null,
 )
 const selectedBreed = computed(() =>
   breeds.value.find(({ name }) => name === profile.value.breedName),
 )
 const walkPlan = computed(() =>
   profileSaved.value
-    ? getPersonalizedWalkPlan(props.city, props.city.hourly, profile.value, selectedBreed.value)
+    ? getPersonalizedWalkPlan(
+        props.city,
+        props.city.hourly,
+        profile.value,
+        selectedBreed.value,
+        walkOptions.value,
+      )
     : null,
 )
 
-const formatHour = (time) => `${String(Number(time.slice(11, 13))).padStart(2, '0')}:00`
+const formatWalkTime = (time) => {
+  if (typeof time !== 'string') return '시간 정보 없음'
+  const instant = Date.parse(/(?:Z|[+-]\d{2}:\d{2})$/u.test(time) ? time : `${time}+09:00`)
+  if (!Number.isFinite(instant)) return '시간 정보 없음'
+  const localTime = new Date(instant + 9 * 60 * 60 * 1000).toISOString()
+  const today = new Date(nowMs.value + 9 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const tomorrow = new Date(nowMs.value + 33 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const date = localTime.slice(0, 10)
+  const day =
+    date === today
+      ? '오늘'
+      : date === tomorrow
+        ? '내일'
+        : `${Number(localTime.slice(5, 7))}/${Number(localTime.slice(8, 10))}`
+  return `${day} ${localTime.slice(11, 16)}`
+}
+const formatWeatherTemperature = (value) =>
+  Number.isFinite(value) ? configStore.formatTemperature(value) : '정보 부족'
+const selectChartSlot = ({ dataIndex }) => {
+  const slot = walkTimes.value.slots[dataIndex]
+  if (slot) selectedSlotTime.value = slot.time
+}
 const walkChartOption = computed(() => ({
   aria: {
     enabled: true,
-    description: '시간대별 반려견 산책 지수를 0점부터 100점까지 막대그래프로 표시합니다.',
+    description:
+      '출발 시각별 산책 구간의 최저 점수를 표시합니다. 회색 막대는 추천에서 제외된 시간입니다. 출발 후보 상세 보기에서 점수와 제외 이유를 확인할 수 있습니다.',
   },
-  grid: { top: 36, right: 18, bottom: 38, left: 42 },
+  grid: { top: 36, right: 18, bottom: 48, left: 42 },
   tooltip: {
     trigger: 'axis',
+    renderMode: 'richText',
     axisPointer: { type: 'shadow' },
     formatter: ([point]) =>
-      `<strong>${point.name}</strong><br/>산책 지수 ${point.value}점<br/>강수 ${point.data.rainChance}% · UV ${Math.round(point.data.uvIndex)}`,
+      point
+        ? `${point.name}\n${point.data.eligible ? '추천 후보' : '추천 제외'}\n구간 최저 ${formatMetric(point.value, '점')}`
+        : '',
   },
   xAxis: {
     type: 'category',
-    data: walkTimes.value.slots.map(({ time }) => formatHour(time)),
+    data: walkTimes.value.slots.map(({ time }) => formatWalkTime(time)),
     axisTick: { show: false },
     axisLine: { lineStyle: { color: '#dfe8e2' } },
     axisLabel: {
       color: '#6f8178',
-      interval: walkTimes.value.slots.length > 12 ? 2 : walkTimes.value.slots.length > 8 ? 1 : 0,
+      interval: 'auto',
+      hideOverlap: true,
+      formatter: (value) => value.replace(' ', '\n'),
     },
   },
   yAxis: {
@@ -110,15 +184,18 @@ const walkChartOption = computed(() => ({
   },
   series: [
     {
-      name: '산책 지수',
+      name: '산책 구간 최저 점수',
       type: 'bar',
       barMaxWidth: 42,
       data: walkTimes.value.slots.map((slot) => ({
         value: slot.score,
-        rainChance: slot.rainChance ?? 0,
-        uvIndex: slot.uvIndex ?? 0,
+        eligible: slot.eligible,
         itemStyle: {
-          color: slot.score >= 80 ? '#259264' : slot.score >= 60 ? '#e2a93b' : '#df614e',
+          color: !slot.eligible
+            ? '#72867a'
+            : slot.score >= 80 && !slot.cautionFlags.length
+              ? '#259264'
+              : '#e2a93b',
           borderRadius: [8, 8, 3, 3],
         },
       })),
@@ -133,24 +210,34 @@ const walkChartOption = computed(() => ({
   ],
 }))
 const saveProfile = () => {
-  localStorage.setItem('petWeatherProfile', JSON.stringify(profile.value))
-  profileSaved.value = true
+  profileStatus.value = ''
+  if (!petProfileStore.saveProfile(draft.value)) {
+    profilePanels.value = ['profile']
+    return
+  }
+  draft.value = { ...profile.value }
   profilePanels.value = []
+  profileStatus.value = '이 브라우저에 프로필을 저장했어요.'
 }
 const resetProfile = () => {
-  localStorage.removeItem('petWeatherProfile')
-  profile.value = emptyProfile()
-  profileSaved.value = false
+  profileStatus.value = ''
+  if (!petProfileStore.resetProfile()) return
+  draft.value = emptyPetProfile()
   profilePanels.value = ['profile']
+  profileStatus.value = '저장된 프로필을 삭제했어요.'
 }
 
 onMounted(async () => {
+  clockTimer = setInterval(() => {
+    nowMs.value = Date.now()
+  }, 60_000)
   try {
     breeds.value = await getDogBreeds()
   } catch (error) {
     breedError.value = error.response?.data?.message ?? '견종 목록을 불러오지 못했습니다.'
   }
 })
+onUnmounted(() => clearInterval(clockTimer))
 </script>
 
 <template>
@@ -162,9 +249,10 @@ onMounted(async () => {
           {{ selected ? '선택한 도시 산책 가이드' : '오늘의 맞춤 산책 가이드' }}
         </span>
         <h3>{{ profileSaved ? `${profile.name}의` : city.name }} 산책 지수</h3>
-        <p>{{ getPetWalkGuide(personalizedScore) }}</p>
+        <p>{{ getPetWalkGuide(assessment) }}</p>
       </div>
       <el-progress
+        v-if="personalizedScore !== null"
         type="dashboard"
         :percentage="personalizedScore"
         :status="progressStatus"
@@ -174,6 +262,7 @@ onMounted(async () => {
           <strong class="score">{{ percentage }}점</strong>
         </template>
       </el-progress>
+      <strong v-if="personalizedScore === null" class="score">정보 부족</strong>
       <el-button v-if="selected" plain @click="$emit('reset-city')">추천 도시로</el-button>
     </header>
 
@@ -181,15 +270,14 @@ onMounted(async () => {
       <el-col :xs="24" :md="12">
         <el-card class="report-card" shadow="never">
           <el-tag :type="heatStatus.level === 'safe' ? 'success' : 'warning'" effect="light">
-            🐕 견종별 체감온도
+            🐕 {{ profileSaved ? '견종별 참고 체감온도' : '기상 체감온도' }}
           </el-tag>
-          <strong
-            >{{ configStore.formatTemperature(breedFeelsLike) }} · {{ heatStatus.label }}</strong
-          >
-          <small>
-            기상 체감온도 {{ configStore.formatTemperature(city.feelsLike) }}에 견종·털 길이·체중을
+          <strong>{{ formatWeatherTemperature(breedFeelsLike) }} · {{ heatStatus.label }}</strong>
+          <small v-if="profileSaved">
+            기상 체감온도 {{ formatWeatherTemperature(city.feelsLike) }}에 견종·털 길이·체중을
             반영한 참고값입니다.
           </small>
+          <small v-else>저장한 프로필이 없어 기상 체감온도로 평가했어요.</small>
         </el-card>
       </el-col>
       <el-col :xs="24" :md="12">
@@ -224,38 +312,245 @@ onMounted(async () => {
       />
     </el-card>
 
-    <el-card v-if="walkTimes.best" class="inner-card" shadow="never">
+    <el-card class="inner-card" shadow="never">
       <div class="section-heading">
-        <h4>⭐ 시간대별 산책 추천</h4>
-        <el-tag :type="walkTimes.best.score >= 60 ? 'success' : 'danger'" effect="dark" round>
+        <h4>⭐ 산책 시작 시간 추천</h4>
+        <el-tag
+          v-if="walkTimes.best"
+          :type="walkTimes.best.score >= 80 ? 'success' : 'warning'"
+          effect="dark"
+          round
+        >
+          추천 {{ formatWalkTime(walkTimes.best.time) }}
+        </el-tag>
+        <el-tag v-else type="info" round>추천 시간 없음</el-tag>
+      </div>
+
+      <el-form class="walk-settings" label-position="top" @submit.prevent>
+        <el-form-item label="산책 가능한 시간대">
+          <el-select v-model="availability" aria-label="산책 가능한 시간대">
+            <el-option label="시간 제한 없음" value="all" />
+            <el-option label="아침 (06:00~10:00)" value="morning" />
+            <el-option label="저녁 (17:00~22:00)" value="evening" />
+            <el-option label="직접 설정" value="custom" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="1회 산책 시간">
+          <el-select v-model="durationMinutes" aria-label="1회 산책 시간">
+            <el-option
+              v-for="minutes in [15, 30, 45, 60, 90]"
+              :key="minutes"
+              :label="`${minutes}분`"
+              :value="minutes"
+            />
+          </el-select>
+        </el-form-item>
+        <div v-if="availability === 'custom'" class="custom-time-window">
+          <label :for="`${timeInputId}-start`">
+            산책 가능한 시작 시각
+            <input
+              :id="`${timeInputId}-start`"
+              v-model="startTime"
+              type="time"
+              required
+              :aria-invalid="Boolean(settingsError)"
+              :aria-describedby="`${timeInputId}-hint`"
+            />
+          </label>
+          <label :for="`${timeInputId}-end`">
+            산책 가능한 종료 시각
+            <input
+              :id="`${timeInputId}-end`"
+              v-model="endTime"
+              type="time"
+              required
+              :aria-invalid="Boolean(settingsError)"
+              :aria-describedby="`${timeInputId}-hint`"
+            />
+          </label>
+          <small :id="`${timeInputId}-hint`">
+            {{ settingsError || '종료 시각이 더 이르면 다음 날까지 이어지는 시간대로 설정돼요.' }}
+          </small>
+        </div>
+      </el-form>
+      <p class="walk-method">
+        정시 출발을 기준으로 {{ durationMinutes }}분 산책이 끝날 때까지의 날씨를 확인해요. 시간 단위
+        예보이므로 출발과 종료 시각 양쪽의 시간 경계까지 보수적으로 평가해요.
+      </p>
+      <el-alert
+        v-if="!walkTimes.best"
+        :title="walkTimes.message || '조건에 맞는 산책 시간을 찾지 못했어요.'"
+        :type="settingsError ? 'error' : 'info'"
+        show-icon
+        :closable="false"
+      />
+      <div v-if="walkTimes.groups.length" class="start-time-groups">
+        <strong>산책 시작 가능 시간</strong>
+        <p>최고 점수와 3점 이내이며 날씨와 주의 조건도 비슷한 출발 시간을 묶었어요.</p>
+        <div v-for="group in walkTimes.groups" :key="group.startTime" class="start-time-group">
+          <strong>
+            {{ formatWalkTime(group.startTime) }}
+            <template v-if="group.startTime !== group.endTime">
+              ~ {{ formatWalkTime(group.endTime) }}
+            </template>
+          </strong>
+          <span>
+            {{
+              group.minScore === group.maxScore
+                ? `${group.minScore}점`
+                : `${group.minScore}~${group.maxScore}점`
+            }}
+            · 출발 후보 {{ group.count }}개
+          </span>
+        </div>
+      </div>
+
+      <VChart class="walk-chart" :option="walkChartOption" autoresize @click="selectChartSlot" />
+      <div class="chart-legend">
+        <span class="good">● 쾌적한 후보</span>
+        <span class="careful">● 주의 조건 있는 후보</span>
+        <span class="excluded">● 추천에서 제외</span>
+        <small>출발 후보를 선택하면 산책 구간의 날씨와 제외 이유를 확인할 수 있어요.</small>
+      </div>
+
+      <div v-if="selectedSlot" class="slot-detail">
+        <label class="slot-picker" :for="`${timeInputId}-candidate`">
+          출발 후보 상세 보기
+          <select
+            :id="`${timeInputId}-candidate`"
+            :value="selectedSlot.time"
+            @change="selectedSlotTime = $event.target.value"
+          >
+            <option v-for="slot in walkTimes.slots" :key="slot.time" :value="slot.time">
+              {{ formatWalkTime(slot.time) }} ·
+              {{ slot.score === null ? '정보 부족' : slot.eligible ? '추천 후보' : '추천 제외' }}
+            </option>
+          </select>
+        </label>
+        <el-tag
+          :type="
+            selectedSlot.eligible
+              ? selectedSlot.cautionFlags.length
+                ? 'warning'
+                : 'success'
+              : selectedSlot.score === null
+                ? 'info'
+                : 'danger'
+          "
+          effect="light"
+        >
           {{
-            walkTimes.best.score >= 60
-              ? `BEST ${formatHour(walkTimes.best.time)}`
-              : '야외 산책 비추천'
+            selectedSlot.score === null
+              ? '정보 부족'
+              : selectedSlot.eligible
+                ? selectedSlot.cautionFlags.length
+                  ? '주의 후보'
+                  : '추천 후보'
+                : '추천 제외'
           }}
         </el-tag>
-      </div>
-      <VChart class="walk-chart" :option="walkChartOption" autoresize />
-      <div class="chart-legend" aria-hidden="true">
-        <span class="good">● 80점 이상 추천</span>
-        <span class="careful">● 60점 이상 주의</span>
-        <span class="danger">● 60점 미만 위험</span>
-        <small>막대에 마우스를 올리거나 터치하면 강수·UV를 확인할 수 있어요.</small>
+        <template v-if="selectedSlot.evaluation">
+          <h4>구간 최저점의 감점 내역</h4>
+          <p>
+            평가 시각 {{ formatWalkTime(selectedSlot.evaluatedAt) }} · 강수는
+            {{ formatWalkTime(selectedSlot.rainInterval.startTime) }}~{{
+              formatWalkTime(selectedSlot.rainInterval.endTime)
+            }}
+            구간 예보를 적용했어요.
+          </p>
+          <dl class="walk-details">
+            <div v-for="item in selectedSlot.deductions" :key="item.code">
+              <dt>{{ item.label }}</dt>
+              <dd>{{ formatMetric(item.points, '점 감점') }} · {{ item.detail }}</dd>
+            </div>
+          </dl>
+          <small
+            >항목과 총점의 표시 반올림으로 합계가 조금 다를 수 있어요. 위험 조건은 점수보다
+            우선해요.</small
+          >
+          <p v-if="selectedSlot.score === 60 && selectedSlot.unroundedScore < 60">
+            반올림 전 {{ selectedSlot.unroundedScore }}점으로 추천 기준 60점에 미달해요.
+          </p>
+        </template>
+        <dl class="walk-details">
+          <div>
+            <dt>출발 · 종료</dt>
+            <dd>
+              {{ formatWalkTime(selectedSlot.time) }} ~ {{ formatWalkTime(selectedSlot.endTime) }}
+            </dd>
+          </div>
+          <div>
+            <dt>산책 구간 최저 점수</dt>
+            <dd>{{ formatMetric(selectedSlot.score, '점') }}</dd>
+          </div>
+          <div>
+            <dt>출발 이후 점수 변화</dt>
+            <dd>
+              {{
+                selectedSlot.score === null
+                  ? '정보 부족'
+                  : selectedSlot.deterioration > 0
+                    ? `${selectedSlot.deterioration}점 하락`
+                    : '점수 하락 없음'
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>출발 기온 · 체감온도</dt>
+            <dd>
+              {{ formatWeatherTemperature(selectedSlot.temp) }} ·
+              {{ formatWeatherTemperature(selectedSlot.feelsLike) }}
+            </dd>
+          </div>
+          <div>
+            <dt>구간 최고 강수확률</dt>
+            <dd>{{ formatMetric(selectedSlot.peakRainChance, '%') }}</dd>
+          </div>
+          <div>
+            <dt>구간 최고 풍속</dt>
+            <dd>{{ formatMetric(selectedSlot.peakWind, 'm/s') }}</dd>
+          </div>
+          <div>
+            <dt>구간 최고 자외선 지수</dt>
+            <dd>{{ formatMetric(selectedSlot.peakUv, '') }}</dd>
+          </div>
+          <div>
+            <dt>구간 최고 대기질 지수</dt>
+            <dd>{{ formatMetric(selectedSlot.peakAqi, ' AQI') }}</dd>
+          </div>
+        </dl>
+        <div v-if="selectedSlot.blockedReasons.length" class="slot-reasons">
+          <strong>추천에서 제외한 이유</strong>
+          <el-space wrap>
+            <el-tag v-for="reason in selectedSlot.blockedReasons" :key="reason" type="warning">
+              {{ reason }}
+            </el-tag>
+          </el-space>
+        </div>
       </div>
     </el-card>
+
+    <el-alert
+      v-if="petProfileStore.storageError || profileStatus"
+      :title="petProfileStore.storageError || profileStatus"
+      :type="petProfileStore.storageError ? 'warning' : 'success'"
+      show-icon
+      :closable="false"
+    />
 
     <el-collapse v-model="profilePanels" class="profile-panel">
       <el-collapse-item name="profile">
         <template #title>
           <strong>🐶 강아지 프로필 {{ profileSaved ? '수정' : '등록' }}</strong>
         </template>
+        <p class="plan-note">수정한 내용은 프로필을 저장하면 산책 추천에 반영돼요.</p>
         <el-form class="profile-form" label-position="top" @submit.prevent="saveProfile">
           <el-form-item label="이름">
-            <el-input v-model.trim="profile.name" required maxlength="20" placeholder="예: 몽이" />
+            <el-input v-model.trim="draft.name" required maxlength="20" placeholder="예: 몽이" />
           </el-form-item>
           <el-form-item label="견종">
             <el-select
-              v-model="profile.breedName"
+              v-model="draft.breedName"
               required
               filterable
               placeholder="견종을 선택하세요"
@@ -269,11 +564,11 @@ onMounted(async () => {
             </el-select>
           </el-form-item>
           <el-form-item label="나이">
-            <el-input-number v-model="profile.age" :min="0" :max="30" controls-position="right" />
+            <el-input-number v-model="draft.age" :min="0" :max="30" controls-position="right" />
           </el-form-item>
           <el-form-item label="몸무게(kg)">
             <el-input-number
-              v-model="profile.weight"
+              v-model="draft.weight"
               :min="0.5"
               :max="120"
               :step="0.1"
@@ -281,14 +576,14 @@ onMounted(async () => {
             />
           </el-form-item>
           <el-form-item label="털 길이">
-            <el-select v-model="profile.coatLength">
+            <el-select v-model="draft.coatLength">
               <el-option label="짧음" value="short" />
               <el-option label="보통" value="medium" />
               <el-option label="김" value="long" />
             </el-select>
           </el-form-item>
           <el-form-item label="활동량">
-            <el-select v-model="profile.activity">
+            <el-select v-model="draft.activity">
               <el-option label="낮음" value="low" />
               <el-option label="보통" value="normal" />
               <el-option label="높음" value="high" />
@@ -299,7 +594,7 @@ onMounted(async () => {
               class="save-profile"
               type="primary"
               native-type="submit"
-              :disabled="!profile.name || !profile.breedName"
+              :disabled="!validDraft"
               >프로필 저장</el-button
             >
             <el-button
@@ -323,8 +618,18 @@ onMounted(async () => {
           <span class="eyebrow">BREED &amp; WEATHER PLAN</span>
           <h4>🐾 {{ profile.name }}의 오늘 산책 플랜</h4>
         </div>
-        <el-tag :type="personalizedScore >= 60 ? 'success' : 'danger'" effect="dark" round>
-          맞춤 {{ personalizedScore }}점
+        <el-tag
+          :type="
+            progressStatus === 'success'
+              ? 'success'
+              : progressStatus === 'warning'
+                ? 'warning'
+                : 'danger'
+          "
+          effect="dark"
+          round
+        >
+          {{ personalizedScore === null ? '정보 부족' : `맞춤 ${personalizedScore}점` }}
         </el-tag>
       </div>
 
@@ -343,11 +648,11 @@ onMounted(async () => {
           <strong>{{ walkPlan.intensity }}</strong>
         </div>
         <div class="plan-metric">
-          <small>오늘 추천 시간</small>
+          <small>설정에 맞는 추천 출발 시간</small>
           <strong v-if="walkPlan.bestTime && walkPlan.bestTimeScore >= 60">
-            {{ formatHour(walkPlan.bestTime) }}
+            {{ formatWalkTime(walkPlan.bestTime) }}
           </strong>
-          <strong v-else>실내 활동</strong>
+          <strong v-else>조건에 맞는 시간 없음</strong>
         </div>
       </div>
 
@@ -481,9 +786,144 @@ small {
 
 .section-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.walk-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+  margin-top: 12px;
+}
+
+.walk-settings :deep(.el-select) {
+  width: 100%;
+}
+
+.custom-time-window {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.custom-time-window label,
+.slot-picker {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  color: #42594b;
+  font-size: 13px;
+}
+
+.custom-time-window small {
+  grid-column: 1 / -1;
+}
+
+.custom-time-window input,
+.slot-picker select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid #bfcfc3;
+  border-radius: 8px;
+  color: #34483e;
+  background: #fff;
+  font: inherit;
+}
+
+.custom-time-window input:focus-visible,
+.slot-picker select:focus-visible {
+  outline: 3px solid #19724e;
+  outline-offset: 2px;
+}
+
+.walk-method,
+.start-time-groups p {
+  color: #5f7067;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.walk-method {
+  margin: 8px 0 16px;
+}
+
+.start-time-groups {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.start-time-groups p {
+  margin: 0;
+}
+
+.start-time-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #cfe1d3;
+  border-radius: 10px;
+  color: #315a48;
+  background: #f2f8f1;
+  font-size: 13px;
+}
+
+.start-time-group span {
+  color: #5f7067;
+}
+
+.slot-detail {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #dce8de;
+  border-radius: 12px;
+  background: #f8fbf7;
+}
+
+.slot-detail > .el-tag {
+  justify-self: start;
+}
+
+.walk-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.walk-details > div:first-child {
+  grid-column: 1 / -1;
+}
+
+.walk-details dt {
+  color: #5f7067;
+  font-size: 12px;
+}
+
+.walk-details dd {
+  margin: 6px 0 0;
+  color: #34483e;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.slot-reasons {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
 }
 
 .walk-chart {
@@ -506,11 +946,11 @@ small {
 }
 
 .chart-legend .careful {
-  color: #c48c1d;
+  color: #896015;
 }
 
-.chart-legend .danger {
-  color: #df614e;
+.chart-legend .excluded {
+  color: #596e60;
 }
 
 .chart-legend small {
@@ -614,7 +1054,8 @@ small {
     margin-bottom: 12px;
   }
 
-  .profile-form {
+  .profile-form,
+  .walk-settings {
     grid-template-columns: 1fr;
   }
 

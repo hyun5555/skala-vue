@@ -1,0 +1,35 @@
+name: 개발 품질 검사
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 소스 가져오기
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Node 설치
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: 의존성 설치
+        run: npm ci --include=dev --no-audit --no-fund
+      - name: 민감값 검사
+        run: npm run secrets:check
+      - name: 읽기 전용 코드 검사
+        run: npm run lint:check
+      - name: 회귀 테스트
+        run: npm test
+      - name: 운영 빌드
+        run: npm run build
+      - name: 의존성 취약점 검사
+        run: npm audit --audit-level=high --include=dev

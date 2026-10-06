@@ -1,5 +1,5 @@
 import http from 'node:http'
-import { handleRequest } from './server.js'
+import { handleRequest, securityHeaders } from './server.js'
 
 const port = process.env.PORT || 3001
 
@@ -20,7 +20,7 @@ http
       response.writeHead(500, {
         'Content-Type': 'application/json; charset=utf-8',
         'Cache-Control': 'no-store',
-        'X-Content-Type-Options': 'nosniff',
+        ...securityHeaders,
       })
       response.end(JSON.stringify({ message: 'API 서버 오류가 발생했습니다.' }))
     }

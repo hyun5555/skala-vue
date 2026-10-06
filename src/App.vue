@@ -1,6 +1,19 @@
 <script setup>
+import { computed } from 'vue'
 import { Compass, House, InfoFilled, Sunny } from '@element-plus/icons-vue'
 import UnitToggler from '@/components/UnitToggler.vue'
+import { useConfigStore } from '@/stores/configStore.js'
+import { useFavoriteStore } from '@/stores/favoriteStore.js'
+
+const configStore = useConfigStore()
+const favoriteStore = useFavoriteStore()
+const storageMessage = computed(() =>
+  [...new Set([configStore.storageError, favoriteStore.storageError].filter(Boolean))].join(' '),
+)
+const dismissStorageMessage = () => {
+  configStore.clearStorageError()
+  favoriteStore.clearStorageError()
+}
 
 const navItems = [
   { to: '/', label: '오늘 날씨', icon: House },
@@ -44,6 +57,14 @@ const navItems = [
     </el-header>
 
     <el-main class="app-main">
+      <el-alert
+        v-if="storageMessage"
+        class="storage-notice"
+        :title="storageMessage"
+        type="warning"
+        show-icon
+        @close="dismissStorageMessage"
+      />
       <RouterView v-slot="{ Component }">
         <KeepAlive include="WeatherHomeView">
           <component :is="Component" />
@@ -165,6 +186,10 @@ const navItems = [
   margin: 0 auto;
   padding: 30px 0 72px;
   overflow: visible;
+}
+
+.storage-notice {
+  margin-bottom: 18px;
 }
 
 .mobile-nav {

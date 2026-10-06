@@ -1,29 +1,31 @@
 <script setup>
 import { ArrowRight, Star, StarFilled } from '@element-plus/icons-vue'
+import { formatWeatherMetric, getPetWalkGuide } from '@/services/petWeather.js'
 
 const props = defineProps({
   city: { type: Object, required: true },
   selected: Boolean,
   expanded: Boolean,
-  outingIndex: { type: Number, required: true },
-  outingGuide: { type: String, required: true },
+  assessment: { type: Object, required: true },
   itemToBring: { type: String, required: true },
   favorite: Boolean,
 })
 
 defineEmits(['select-card', 'click-detail', 'toggle-favorite'])
 
-const temperatureTag = () => {
-  if (props.city.temp >= 25) return { type: 'danger', text: '더운 날' }
-  if (props.city.temp >= 10) return { type: 'success', text: '걷기 좋은 날' }
-  return { type: 'primary', text: '쌀쌀한 날' }
+const walkTag = () => {
+  if (props.assessment.score === null) return { type: 'info', text: '정보 부족' }
+  if (!props.assessment.eligible) return { type: 'danger', text: '추천 제외' }
+  if (props.assessment.cautionFlags.length || props.assessment.score < 80)
+    return { type: 'warning', text: '주의 조건 확인' }
+  return { type: 'success', text: '쾌적한 후보' }
 }
 </script>
 
 <template>
   <el-card class="weather-card" :class="{ selected }" shadow="never">
     <div class="card-top">
-      <el-tag :type="temperatureTag().type" effect="light">{{ temperatureTag().text }}</el-tag>
+      <el-tag :type="walkTag().type" effect="light">{{ walkTag().text }}</el-tag>
       <el-button
         class="favorite-button"
         circle
@@ -58,14 +60,13 @@ const temperatureTag = () => {
           <small>체감</small><strong>{{ city.displayFeelsLike }}</strong>
         </div>
         <div>
-          <small>습도</small><strong>{{ city.humidity }}%</strong>
+          <small>습도</small><strong>{{ formatWeatherMetric(city.humidity, '%') }}</strong>
         </div>
         <div>
-          <small>바람</small><strong>{{ city.wind }}m/s</strong>
+          <small>바람</small><strong>{{ formatWeatherMetric(city.wind, 'm/s') }}</strong>
         </div>
         <div>
-          <small>대기질</small
-          ><strong>{{ city.airQuality ? Math.round(city.airQuality.us_aqi) : '-' }}</strong>
+          <small>대기질</small><strong>{{ formatWeatherMetric(city.airQuality?.us_aqi) }}</strong>
         </div>
       </div>
     </div>
@@ -73,9 +74,21 @@ const temperatureTag = () => {
     <div class="card-footer">
       <div class="outing-score">
         <span
-          >외출 컨디션 <strong>{{ outingIndex }}</strong></span
+          >산책 지수 <strong>{{ formatWeatherMetric(assessment.score) }}</strong></span
         >
-        <el-progress :percentage="outingIndex" :show-text="false" :stroke-width="6" />
+        <el-progress
+          v-if="assessment.score !== null"
+          :percentage="assessment.score"
+          :status="
+            !assessment.eligible
+              ? 'exception'
+              : walkTag().type === 'warning'
+                ? 'warning'
+                : 'success'
+          "
+          :show-text="false"
+          :stroke-width="6"
+        />
       </div>
       <el-button text type="primary" @click="$emit('click-detail', city)">
         자세히 <el-icon><ArrowRight /></el-icon>
@@ -85,8 +98,8 @@ const temperatureTag = () => {
     <el-alert
       v-if="expanded"
       class="city-detail"
-      :title="`${city.name} 외출 지수 ${outingIndex}점`"
-      :description="`${outingGuide} · 추천 준비물 ${itemToBring}`"
+      :title="`${city.name} 산책 지수 ${formatWeatherMetric(assessment.score, '점')}`"
+      :description="`${getPetWalkGuide(assessment)} · 추천 준비물 ${itemToBring}`"
       type="info"
       :closable="false"
       show-icon

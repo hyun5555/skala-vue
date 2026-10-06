@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import { handleRequest } from '../server.js'
 import { createLocationId, getKakaoPlaceUrl } from '../server-utils.js'
 
@@ -8,6 +9,20 @@ const testEnv = {
   KAKAO_REST_API_KEY: 'test-only-kakao',
 }
 const request = (path, method = 'GET') => new Request(`https://example.test${path}`, { method })
+const configuredHeaders = JSON.parse(
+  readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'),
+).headers[0].headers
+
+test('입력 거절과 없는 API 오류도 배포 설정과 동일한 보안 헤더를 반환한다', async () => {
+  for (const response of [
+    await handleRequest(request('/api/not-found'), testEnv),
+    await handleRequest(request('/api/weather', 'POST'), testEnv),
+    await handleRequest(request('/api/places'), testEnv),
+  ]) {
+    for (const { key, value } of configuredHeaders) assert.equal(response.headers.get(key), value)
+    assert.equal(response.headers.get('Cache-Control'), 'no-store')
+  }
+})
 
 const preventExternalRequests = (t) =>
   t.mock.method(globalThis, 'fetch', () => {
@@ -124,4 +139,71 @@ test('장소 링크는 숫자 ID만 허용한다', () => {
   ]) {
     assert.equal(getKakaoPlaceUrl(id), '')
   }
+})
+
+test('시간별 날씨는 KST·종료 여유 예보를 요청하고 같은 시각의 대기질만 연결한다', async (t) => {
+  const times = ['2026-10-06T00:00', '2026-10-06T01:00', '2026-10-06T02:00', '2026-10-06T03:00']
+  const fetch = t.mock.method(globalThis, 'fetch', async (outbound) => {
+    const url = new URL(outbound.url)
+    if (url.hostname === 'api.openweathermap.org') {
+      if (url.pathname.endsWith('/forecast')) return Response.json({ list: [] })
+      return Response.json({
+        main: { temp: null, feels_like: null, humidity: 50 },
+        weather: [{ main: 'Clear', description: '맑음', icon: '01d' }],
+        wind: { speed: 2 },
+        dt: 1791212400,
+      })
+    }
+    assert.equal(url.searchParams.get('timezone'), 'Asia/Seoul')
+    assert.equal(url.searchParams.get('forecast_hours'), '27')
+    if (url.hostname === 'air-quality-api.open-meteo.com') {
+      assert.equal(url.searchParams.get('hourly'), 'us_aqi,pm2_5')
+      return Response.json({
+        current: { us_aqi: 10, pm2_5: 4 },
+        hourly: {
+          time: [times[2], times[0], times[1], times[1]],
+          us_aqi: [140, 20, 151, 20],
+          pm2_5: [40, 4, 50, 4],
+        },
+      })
+    }
+    assert.equal(url.hostname, 'api.open-meteo.com')
+    return Response.json({
+      hourly: {
+        time: times,
+        temperature_2m: [20, 20, 20, 20],
+        apparent_temperature: [20, 20, 20, 20],
+        relative_humidity_2m: [50, 50, 50, 50],
+        precipitation_probability: [0, 0, 0, 0],
+        precipitation: [0, 0, 0, 0],
+        weather_code: [80, 85, 95, null],
+        wind_speed_10m: [7.2, null, 7.2, 7.2],
+        uv_index: [1, 1, 1, 1],
+      },
+    })
+  })
+  const response = await handleRequest(request('/api/weather/city_01'), testEnv)
+  assert.equal(response.status, 200)
+  const data = await response.json()
+  assert.deepEqual(
+    data.hourly.map(({ condition }) => condition),
+    ['Rain', 'Snow', 'Thunderstorm', 'Unknown'],
+  )
+  assert.deepEqual(
+    data.hourly.map(({ weatherCode }) => weatherCode),
+    [80, 85, 95, null],
+  )
+  assert.deepEqual(
+    data.hourly.map(({ wind }) => wind),
+    [2, null, 2, 2],
+  )
+  assert.equal(data.airQuality.us_aqi, 10)
+  assert.equal(data.temp, null)
+  assert.equal(data.feelsLike, null)
+  assert.equal(data.rainChance, null)
+  assert.deepEqual(
+    data.hourly.map(({ airQuality }) => airQuality?.us_aqi ?? null),
+    [20, null, 140, null],
+  )
+  assert.equal(fetch.mock.callCount(), 4)
 })
