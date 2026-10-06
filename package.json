@@ -11,9 +11,13 @@
     "test": "node --test",
     "preview": "vite preview",
     "server": "node --env-file=.env.local node-server.js",
-    "lint": "run-s lint:*",
+    "lint": "run-s lint:oxlint lint:eslint",
     "lint:oxlint": "oxlint . --fix",
     "lint:eslint": "eslint . --fix --cache",
+    "lint:check": "oxlint . && eslint .",
+    "secrets:check": "node scripts/check-secrets.mjs",
+    "deployment:check": "node scripts/check-deployment.mjs",
+    "check": "run-s secrets:check lint:check test build",
     "format": "prettier --write --experimental-cli src/"
   },
   "dependencies": {

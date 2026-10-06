@@ -128,23 +128,188 @@ export const getWalkAnalysis = (weather) => {
   return { reasons, risks, pavementRisk }
 }
 
-export const getBestWalkTime = (hourly = [], profile) => {
-  const today = hourly[0]?.time?.slice(0, 10)
-  const slots = hourly
-    .filter(({ time }) => !today || time.startsWith(today))
-    .map((weather) => ({
-      ...weather,
-      score: profile?.name
-        ? calculatePersonalizedWalkIndex(weather, profile)
-        : calculatePetWalkIndex(weather),
-    }))
+const hourMs = 60 * 60 * 1000
+const minuteMs = 60 * 1000
+const koreaOffsetMs = 9 * hourMs
+
+const forecastTime = (time) => {
+  if (typeof time !== 'string') return NaN
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:00)(?::00)?(?:\+09:00)?$/.exec(time)
+  if (!match) return NaN
+  const timestamp = Date.parse(`${match[1]}:00+09:00`)
+  return Number.isFinite(timestamp) &&
+    new Date(timestamp + koreaOffsetMs).toISOString().slice(0, 16) === match[1]
+    ? timestamp
+    : NaN
+}
+
+const clockMinutes = (value) =>
+  typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)
+    ? Number(value.slice(0, 2)) * 60 + Number(value.slice(3))
+    : NaN
+
+const completeForecast = (weather) =>
+  [weather.temp, weather.feelsLike ?? weather.temp].every(Number.isFinite) &&
+  Number.isFinite(weather.humidity) &&
+  weather.humidity >= 0 &&
+  weather.humidity <= 100 &&
+  Number.isFinite(weather.wind) &&
+  weather.wind >= 0 &&
+  Number.isFinite(weather.rainChance) &&
+  weather.rainChance >= 0 &&
+  weather.rainChance <= 100 &&
+  Number.isFinite(weather.precipitation) &&
+  weather.precipitation >= 0 &&
+  Number.isFinite(weather.uvIndex) &&
+  weather.uvIndex >= 0 &&
+  Number.isFinite(weather.airQuality?.us_aqi) &&
+  weather.airQuality.us_aqi >= 0 &&
+  ['Clear', 'Clouds', 'Mist', 'Rain', 'Drizzle', 'Snow', 'Thunderstorm'].includes(weather.condition)
+
+const avoidanceReasons = (weather, profile) => {
+  const reasons = []
+  const feelsLike = profile?.name
+    ? getBreedFeelsLike(weather, profile)
+    : (weather.feelsLike ?? weather.temp)
+  if (weather.condition === 'Thunderstorm') reasons.push('산책 구간에 뇌우 예보가 있어요.')
+  if ([56, 57, 66, 67].includes(weather.weatherCode))
+    reasons.push('어는 비로 노면 결빙 위험이 있어요.')
+  if (feelsLike >= 30) reasons.push('산책 구간에 높은 체감온도가 예상돼요.')
+  if (feelsLike <= -5) reasons.push('산책 구간에 매우 낮은 체감온도가 예상돼요.')
+  if (weather.wind >= 12) reasons.push('산책 구간에 강한 바람이 예상돼요.')
+  if (weather.precipitation >= 5) reasons.push('산책 구간에 강한 강수가 예상돼요.')
+  if (weather.airQuality?.us_aqi >= 151) reasons.push('산책 구간의 대기질이 나빠요.')
+  return reasons
+}
+
+export const getBestWalkTime = (hourly = [], profile, options = {}) => {
+  const {
+    now = Date.now(),
+    availability = 'all',
+    durationMinutes = 30,
+    startTime = '07:00',
+    endTime = '21:00',
+  } = options
+  const range = {
+    all: [0, 1440],
+    morning: [360, 600],
+    evening: [1020, 1320],
+    custom: [clockMinutes(startTime), clockMinutes(endTime)],
+  }[availability]
+  const empty = (message) => ({ slots: [], best: null, groups: [], message })
+  if (
+    !Number.isFinite(now) ||
+    !Number.isInteger(durationMinutes) ||
+    durationMinutes < 15 ||
+    durationMinutes > 120 ||
+    !Array.isArray(range) ||
+    !range.every(Number.isFinite) ||
+    range[0] === range[1]
+  )
+    return empty('산책 가능 시간과 산책 길이(15~120분)를 확인해 주세요.')
+
+  const forecasts = new Map()
+  for (const weather of Array.isArray(hourly) ? hourly : []) {
+    if (!weather || typeof weather !== 'object') continue
+    const timestamp = forecastTime(weather.time)
+    if (!Number.isFinite(timestamp)) continue
+    forecasts.set(timestamp, forecasts.has(timestamp) ? { ...weather, duplicate: true } : weather)
+  }
+  const slots = [...forecasts.entries()]
+    .sort(([a], [b]) => a - b)
+    .filter(([timestamp]) => timestamp >= now && timestamp < now + 24 * hourMs)
+    .filter(([timestamp]) => {
+      if (availability === 'all') return true
+      const start = ((timestamp + koreaOffsetMs) % (24 * hourMs)) / minuteMs
+      const [from, to] = range
+      return from < to
+        ? start >= from && start + durationMinutes <= to
+        : start >= from
+          ? start + durationMinutes <= to + 1440
+          : start < to && start + durationMinutes <= to
+    })
+    .map(([timestamp, weather]) => {
+      const end = timestamp + durationMinutes * minuteMs
+      const window = []
+      // ponytail: 정시 예보만 있어 양쪽 시간 경계까지 보수적으로 확인한다. 실제 15분 예보가 생기면 간격을 줄인다.
+      for (let time = timestamp; time <= Math.ceil(end / hourMs) * hourMs; time += hourMs)
+        window.push(forecasts.get(time))
+      const complete = window.every((item) => item && !item.duplicate && completeForecast(item))
+      const scores = complete
+        ? window.map((item) =>
+            profile?.name
+              ? calculatePersonalizedWalkIndex(item, profile)
+              : calculatePetWalkIndex(item),
+          )
+        : []
+      const score = complete ? Math.min(...scores) : null
+      const reasons = [
+        ...new Set(window.filter(Boolean).flatMap((item) => avoidanceReasons(item, profile))),
+      ]
+      if (!complete) reasons.push('산책 구간의 날씨·대기질 예보가 부족하거나 중복돼요.')
+      if (score !== null && score < 60) reasons.push('산책 구간의 최저 점수가 60점 미만이에요.')
+      const peak = (key) => {
+        const values = window.map((item) => item?.[key]).filter(Number.isFinite)
+        return values.length ? Math.max(...values) : null
+      }
+      return {
+        ...weather,
+        time: weather.time,
+        endTime: `${new Date(end + koreaOffsetMs).toISOString().slice(0, 16)}+09:00`,
+        score,
+        eligible: complete && reasons.length === 0,
+        blockedReasons: reasons,
+        deterioration: complete ? scores[0] - score : 0,
+        peakRainChance: peak('rainChance'),
+        peakWind: peak('wind'),
+        peakUv: peak('uvIndex'),
+      }
+    })
+  const ranked = slots
+    .filter(({ eligible }) => eligible)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.deterioration - b.deterioration ||
+        forecastTime(a.time) - forecastTime(b.time),
+    )
+  const best = ranked[0] ?? null
+  const groups = []
+  for (const slot of slots.filter((item) => item.eligible && best.score - item.score <= 3)) {
+    const group = groups.at(-1)
+    if (group && forecastTime(slot.time) - forecastTime(group.endTime) === hourMs) {
+      group.endTime = slot.time
+      group.minScore = Math.min(group.minScore, slot.score)
+      group.maxScore = Math.max(group.maxScore, slot.score)
+      group.count += 1
+    } else
+      groups.push({
+        startTime: slot.time,
+        endTime: slot.time,
+        minScore: slot.score,
+        maxScore: slot.score,
+        count: 1,
+      })
+  }
   return {
     slots,
-    best: slots.reduce((best, slot) => (!best || slot.score > best.score ? slot : best), null),
+    best,
+    groups,
+    message: best
+      ? ''
+      : slots.length
+        ? '추천 가능한 시간이 없어요. 위험 조건이나 예보 부족을 확인해 주세요.'
+        : '앞으로 24시간에 산책을 마칠 수 있는 출발 시간이 없어요. 시간 범위를 바꾸거나 예보를 새로고침해 주세요.',
   }
 }
 
-export const getPersonalizedWalkPlan = (weather, hourly = [], profile = {}, breed = {}) => {
+export const getPersonalizedWalkPlan = (
+  weather,
+  hourly = [],
+  profile = {},
+  breed = {},
+  options = {},
+) => {
   const name = profile.name || '반려견'
   const breedName = profile.breedName || '등록한 견종'
   const age = Number(profile.age)
@@ -163,7 +328,7 @@ export const getPersonalizedWalkPlan = (weather, hourly = [], profile = {}, bree
   const coldClimate = coldClimateBreed.test(breedName)
   const energetic = /Herding|Sporting|Working|Terrier/i.test(group) || activeBreed.test(breedName)
   const score = calculatePersonalizedWalkIndex(weather, profile)
-  const best = getBestWalkTime(hourly, profile).best
+  const best = getBestWalkTime(hourly, profile, options).best
 
   let minutes = energetic ? 40 : 30
   if (profile.activity === 'high') minutes += 10

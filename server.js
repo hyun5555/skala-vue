@@ -55,8 +55,17 @@ const weatherEmoji = (icon = '') =>
   })[icon.slice(0, 2)] ?? '🌤️'
 
 const forecastCondition = (code) => {
+  if (
+    !Number.isInteger(code) ||
+    ![
+      0, 1, 2, 3, 45, 48, 51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 71, 73, 75, 77, 80, 81, 82, 85,
+      86, 95, 96, 99,
+    ].includes(code)
+  )
+    return { condition: 'Unknown', status: '예보 없음', emoji: '❔' }
   if (code >= 95) return { condition: 'Thunderstorm', status: '뇌우', emoji: '⛈️' }
-  if (code >= 71) return { condition: 'Snow', status: '눈', emoji: '🌨️' }
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86)
+    return { condition: 'Snow', status: '눈', emoji: '🌨️' }
   if (code >= 51) return { condition: 'Rain', status: '비', emoji: '🌧️' }
   if (code >= 45) return { condition: 'Mist', status: '안개', emoji: '🌫️' }
   if (code >= 2) return { condition: 'Clouds', status: '흐림', emoji: '☁️' }
@@ -119,20 +128,23 @@ const searchKoreanLocations = async (query, env) => {
   ]
 }
 
-const getAirQuality = async (selectedCities) => {
+const getAirQuality = async (selectedCities, includeHourly = false) => {
   try {
     const { data } = await airClient.get('/air-quality', {
       params: {
         latitude: selectedCities.map(({ lat }) => lat).join(','),
         longitude: selectedCities.map(({ lon }) => lon).join(','),
         current: 'us_aqi,pm2_5,uv_index',
-        timezone: 'auto',
+        ...(includeHourly ? { hourly: 'us_aqi,pm2_5', forecast_hours: 27 } : {}),
+        timezone: 'Asia/Seoul',
       },
     })
-    return (Array.isArray(data) ? data : [data]).map(({ current }) => current)
+    return (Array.isArray(data) ? data : [data]).map(({ current, hourly }) =>
+      includeHourly ? { current, hourly } : current,
+    )
   } catch {
     console.warn('Open-Meteo air quality unavailable.')
-    return selectedCities.map(() => null)
+    return selectedCities.map(() => (includeHourly ? { current: null, hourly: null } : null))
   }
 }
 
@@ -166,8 +178,9 @@ const getHourlyForecast = async (city) => {
       longitude: city.lon,
       hourly:
         'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,uv_index',
-      forecast_hours: 24,
-      timezone: 'auto',
+      // 현재부터 24시간 안의 출발과 최대 2시간 산책의 종료까지 확인한다.
+      forecast_hours: 27,
+      timezone: 'Asia/Seoul',
     },
   })
   return data.hourly.time.map((time, index) => ({
@@ -177,8 +190,11 @@ const getHourlyForecast = async (city) => {
     humidity: data.hourly.relative_humidity_2m[index],
     rainChance: data.hourly.precipitation_probability[index],
     precipitation: data.hourly.precipitation[index],
-    wind: Math.round((data.hourly.wind_speed_10m[index] / 3.6) * 10) / 10,
+    wind: Number.isFinite(data.hourly.wind_speed_10m[index])
+      ? Math.round((data.hourly.wind_speed_10m[index] / 3.6) * 10) / 10
+      : null,
     uvIndex: data.hourly.uv_index[index],
+    weatherCode: data.hourly.weather_code[index],
     ...forecastCondition(data.hourly.weather_code[index]),
   }))
 }
@@ -301,19 +317,33 @@ export const handleRequest = async (request, env) => {
     const cityId = path.match(/^\/api\/weather\/([A-Za-z0-9_-]+)$/)?.[1]
     const city = cities.find(({ id }) => id === cityId) ?? parseLocationId(cityId)
     if (request.method === 'GET' && city) {
-      const [{ data }, [airQuality], forecast, hourly] = await Promise.all([
+      const [{ data }, [airForecast], forecast, hourly] = await Promise.all([
         getCurrentWeather(city, env),
-        getAirQuality([city]),
+        getAirQuality([city], true),
         getDailyForecast(city, env),
         getHourlyForecast(city),
       ])
+      const airByTime = new Map()
+      for (const [index, time] of (airForecast.hourly?.time ?? []).entries()) {
+        airByTime.set(
+          time,
+          airByTime.has(time)
+            ? { us_aqi: null, pm2_5: null }
+            : {
+                us_aqi: airForecast.hourly.us_aqi?.[index] ?? null,
+                pm2_5: airForecast.hourly.pm2_5?.[index] ?? null,
+              },
+        )
+      }
       return json({
-        ...toWeather(city, data, airQuality),
+        ...toWeather(city, data, airForecast.current),
         rainChance: hourly[0]?.rainChance ?? 0,
         forecast,
         hourly: hourly.map((slot) => ({
           ...slot,
-          airQuality: airQuality ? { ...airQuality, uv_index: slot.uvIndex } : null,
+          airQuality: airByTime.has(slot.time)
+            ? { ...airByTime.get(slot.time), uv_index: slot.uvIndex }
+            : null,
         })),
       })
     }

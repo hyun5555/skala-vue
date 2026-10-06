@@ -84,7 +84,13 @@ onMounted(async () => {
       show-icon
       :closable="false"
     />
-    <DogWalkGuide v-else-if="city" :city="city" :score="score" :care-tips="careTips" />
+    <DogWalkGuide
+      v-if="city"
+      v-show="!loading && !errorMessage"
+      :city="city"
+      :score="score"
+      :care-tips="careTips"
+    />
 
     <PetPlacesMap />
   </main>
