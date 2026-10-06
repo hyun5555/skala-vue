@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowRight, LocationFilled, Refresh } from '@element-plus/icons-vue'
-import { calculatePetWalkIndex, getPetWalkGuide } from '@/services/petWeather.js'
+import { evaluateWalkWeather, formatWeatherMetric, getPetWalkGuide } from '@/services/petWeather.js'
 import { getWeatherList, searchWeatherLocations } from '@/services/weatherApi.js'
 import { useConfigStore } from '@/stores/configStore.js'
 import { useFavoriteStore } from '@/stores/favoriteStore.js'
@@ -131,16 +131,21 @@ const bestCity = computed(() =>
 
 const bestDogWalkCity = computed(() =>
   filteredWeatherList.value.reduce((best, city) => {
-    const score = calculatePetWalkIndex(city)
+    const assessment = evaluateWalkWeather(city)
+    if (!assessment.eligible) return best
+    const score = assessment.score
     return !best || score > best.score ? { city, score } : best
   }, null),
 )
 
-const dogWalkTargetCity = computed(() => selectedCity.value ?? bestDogWalkCity.value?.city ?? null)
-const dogWalkWeather = computed(() => dogWalkTargetCity.value)
-const dogWalkIndex = computed(() =>
-  dogWalkWeather.value ? calculatePetWalkIndex(dogWalkWeather.value) : null,
+const dogWalkTargetCity = computed(
+  () => selectedCity.value ?? bestDogWalkCity.value?.city ?? filteredWeatherList.value[0] ?? null,
 )
+const dogWalkWeather = computed(() => dogWalkTargetCity.value)
+const dogWalkAssessment = computed(() =>
+  dogWalkWeather.value ? evaluateWalkWeather(dogWalkWeather.value) : null,
+)
+const dogWalkIndex = computed(() => dogWalkAssessment.value?.score ?? null)
 
 if (import.meta.env.DEV) {
   watch(selectedCityInfo, (message) => console.log('📍 상태바 문구 변경:', message))
@@ -220,20 +225,22 @@ onBeforeUnmount(() => clearTimeout(searchTimer))
 
 <template>
   <div class="weather-parent">
-    <section v-if="dogWalkWeather && dogWalkIndex !== null" class="walk-hero">
+    <section v-if="dogWalkWeather" class="walk-hero">
       <div class="hero-copy">
         <div class="live-label"><i></i> LIVE WALKING WEATHER · {{ dogWalkWeather.name }}</div>
         <h1>
           오늘의 산책,<br />
           <span>{{
+            dogWalkAssessment.eligible &&
+            !dogWalkAssessment.cautionFlags.length &&
             dogWalkIndex >= 80
               ? '가볍게 출발해요.'
-              : dogWalkIndex >= 60
+              : dogWalkAssessment.eligible && dogWalkIndex >= 60
                 ? '짧게 다녀와요.'
                 : '잠시 쉬어가요.'
           }}</span>
         </h1>
-        <p>{{ getPetWalkGuide(dogWalkIndex) }}</p>
+        <p>{{ getPetWalkGuide(dogWalkAssessment) }}</p>
         <div class="hero-actions">
           <RouterLink :to="{ name: 'dog-walk', query: { city: dogWalkWeather.id } }">
             <el-button type="primary" size="large" round>
@@ -260,12 +267,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer))
           </div>
           <div>
             <small>대기질</small
-            ><strong
-              >AQI
-              {{
-                dogWalkWeather.airQuality ? Math.round(dogWalkWeather.airQuality.us_aqi) : '-'
-              }}</strong
-            >
+            ><strong>AQI {{ formatWeatherMetric(dogWalkWeather.airQuality?.us_aqi) }}</strong>
           </div>
         </div>
       </div>
@@ -273,15 +275,30 @@ onBeforeUnmount(() => clearTimeout(searchTimer))
       <div class="hero-score" aria-label="오늘의 산책 지수">
         <div class="score-top">
           <span>WALK SCORE</span>
-          <em>{{ dogWalkIndex >= 80 ? 'GOOD' : dogWalkIndex >= 60 ? 'CAREFUL' : 'REST' }}</em>
+          <em>{{
+            dogWalkIndex === null
+              ? '정보 부족'
+              : !dogWalkAssessment.eligible
+                ? '추천 제외'
+                : dogWalkAssessment.cautionFlags.length || dogWalkIndex < 80
+                  ? '주의'
+                  : '쾌적'
+          }}</em>
         </div>
-        <strong>{{ dogWalkIndex }}</strong>
+        <strong>{{ dogWalkIndex === null ? '정보 부족' : dogWalkIndex }}</strong>
         <small>/ 100</small>
         <el-progress
+          v-if="dogWalkIndex !== null"
           :percentage="dogWalkIndex"
           :show-text="false"
           :stroke-width="10"
-          :status="dogWalkIndex >= 80 ? 'success' : dogWalkIndex >= 60 ? 'warning' : 'exception'"
+          :status="
+            !dogWalkAssessment.eligible
+              ? 'exception'
+              : dogWalkAssessment.cautionFlags.length || dogWalkIndex < 80
+                ? 'warning'
+                : 'success'
+          "
         />
         <div class="trail-art" aria-hidden="true">
           <span>🌲</span><span>🐕</span><i></i><span>🌿</span>

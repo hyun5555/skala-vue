@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import { handleRequest } from '../server.js'
 import { createLocationId, getKakaoPlaceUrl } from '../server-utils.js'
 
@@ -8,6 +9,20 @@ const testEnv = {
   KAKAO_REST_API_KEY: 'test-only-kakao',
 }
 const request = (path, method = 'GET') => new Request(`https://example.test${path}`, { method })
+const configuredHeaders = JSON.parse(
+  readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'),
+).headers[0].headers
+
+test('입력 거절과 없는 API 오류도 배포 설정과 동일한 보안 헤더를 반환한다', async () => {
+  for (const response of [
+    await handleRequest(request('/api/not-found'), testEnv),
+    await handleRequest(request('/api/weather', 'POST'), testEnv),
+    await handleRequest(request('/api/places'), testEnv),
+  ]) {
+    for (const { key, value } of configuredHeaders) assert.equal(response.headers.get(key), value)
+    assert.equal(response.headers.get('Cache-Control'), 'no-store')
+  }
+})
 
 const preventExternalRequests = (t) =>
   t.mock.method(globalThis, 'fetch', () => {
@@ -133,7 +148,7 @@ test('시간별 날씨는 KST·종료 여유 예보를 요청하고 같은 시�
     if (url.hostname === 'api.openweathermap.org') {
       if (url.pathname.endsWith('/forecast')) return Response.json({ list: [] })
       return Response.json({
-        main: { temp: 20, feels_like: 20, humidity: 50 },
+        main: { temp: null, feels_like: null, humidity: 50 },
         weather: [{ main: 'Clear', description: '맑음', icon: '01d' }],
         wind: { speed: 2 },
         dt: 1791212400,
@@ -183,6 +198,9 @@ test('시간별 날씨는 KST·종료 여유 예보를 요청하고 같은 시�
     [2, null, 2, 2],
   )
   assert.equal(data.airQuality.us_aqi, 10)
+  assert.equal(data.temp, null)
+  assert.equal(data.feelsLike, null)
+  assert.equal(data.rainChance, null)
   assert.deepEqual(
     data.hourly.map(({ airQuality }) => airQuality?.us_aqi ?? null),
     [20, null, 140, null],

@@ -11,9 +11,9 @@ import {
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
 import {
-  calculatePersonalizedWalkIndex,
+  evaluateWalkWeather,
+  formatWeatherMetric as formatMetric,
   getBestWalkTime,
-  getBreedFeelsLike,
   getDogHeatStatus,
   getPetWalkGuide,
   getPersonalizedWalkPlan,
@@ -31,7 +31,6 @@ use([CanvasRenderer, BarChart, GridComponent, TooltipComponent, MarkLineComponen
 
 const props = defineProps({
   city: { type: Object, required: true },
-  score: { type: Number, required: true },
   selected: Boolean,
   careTips: { type: Array, default: () => [] },
 })
@@ -72,14 +71,25 @@ const walkOptions = computed(() => ({
   durationMinutes: durationMinutes.value,
 }))
 
-const analysis = computed(() => getWalkAnalysis(props.city))
-const breedFeelsLike = computed(() => getBreedFeelsLike(props.city, profile.value))
-const heatStatus = computed(() => getDogHeatStatus(breedFeelsLike.value))
-const personalizedScore = computed(() =>
-  profileSaved.value ? calculatePersonalizedWalkIndex(props.city, profile.value) : props.score,
+const assessment = computed(() =>
+  evaluateWalkWeather(props.city, profileSaved.value ? profile.value : null, {
+    source: 'observation',
+  }),
 )
+const analysis = computed(() =>
+  getWalkAnalysis(props.city, profileSaved.value ? profile.value : null, assessment.value),
+)
+const breedFeelsLike = computed(() => assessment.value.feelsLike)
+const heatStatus = computed(() => getDogHeatStatus(breedFeelsLike.value))
+const personalizedScore = computed(() => assessment.value.score)
 const progressStatus = computed(() => {
-  if (personalizedScore.value >= 80) return 'success'
+  if (!assessment.value.eligible) return 'exception'
+  if (
+    assessment.value.eligible &&
+    !assessment.value.cautionFlags.length &&
+    personalizedScore.value >= 80
+  )
+    return 'success'
   if (personalizedScore.value >= 60) return 'warning'
   return 'exception'
 })
@@ -130,8 +140,6 @@ const formatWalkTime = (time) => {
         : `${Number(localTime.slice(5, 7))}/${Number(localTime.slice(8, 10))}`
   return `${day} ${localTime.slice(11, 16)}`
 }
-const formatMetric = (value, unit) =>
-  Number.isFinite(value) ? `${Math.round(value * 10) / 10}${unit}` : '정보 부족'
 const formatWeatherTemperature = (value) =>
   Number.isFinite(value) ? configStore.formatTemperature(value) : '정보 부족'
 const selectChartSlot = ({ dataIndex }) => {
@@ -183,7 +191,11 @@ const walkChartOption = computed(() => ({
         value: slot.score,
         eligible: slot.eligible,
         itemStyle: {
-          color: !slot.eligible ? '#72867a' : slot.score >= 80 ? '#259264' : '#e2a93b',
+          color: !slot.eligible
+            ? '#72867a'
+            : slot.score >= 80 && !slot.cautionFlags.length
+              ? '#259264'
+              : '#e2a93b',
           borderRadius: [8, 8, 3, 3],
         },
       })),
@@ -237,9 +249,10 @@ onUnmounted(() => clearInterval(clockTimer))
           {{ selected ? '선택한 도시 산책 가이드' : '오늘의 맞춤 산책 가이드' }}
         </span>
         <h3>{{ profileSaved ? `${profile.name}의` : city.name }} 산책 지수</h3>
-        <p>{{ getPetWalkGuide(personalizedScore) }}</p>
+        <p>{{ getPetWalkGuide(assessment) }}</p>
       </div>
       <el-progress
+        v-if="personalizedScore !== null"
         type="dashboard"
         :percentage="personalizedScore"
         :status="progressStatus"
@@ -249,6 +262,7 @@ onUnmounted(() => clearInterval(clockTimer))
           <strong class="score">{{ percentage }}점</strong>
         </template>
       </el-progress>
+      <strong v-if="personalizedScore === null" class="score">정보 부족</strong>
       <el-button v-if="selected" plain @click="$emit('reset-city')">추천 도시로</el-button>
     </header>
 
@@ -258,11 +272,9 @@ onUnmounted(() => clearInterval(clockTimer))
           <el-tag :type="heatStatus.level === 'safe' ? 'success' : 'warning'" effect="light">
             🐕 견종별 체감온도
           </el-tag>
-          <strong
-            >{{ configStore.formatTemperature(breedFeelsLike) }} · {{ heatStatus.label }}</strong
-          >
+          <strong>{{ formatWeatherTemperature(breedFeelsLike) }} · {{ heatStatus.label }}</strong>
           <small>
-            기상 체감온도 {{ configStore.formatTemperature(city.feelsLike) }}에 견종·털 길이·체중을
+            기상 체감온도 {{ formatWeatherTemperature(city.feelsLike) }}에 견종·털 길이·체중을
             반영한 참고값입니다.
           </small>
         </el-card>
@@ -373,7 +385,7 @@ onUnmounted(() => clearInterval(clockTimer))
       />
       <div v-if="walkTimes.groups.length" class="start-time-groups">
         <strong>산책 시작 가능 시간</strong>
-        <p>최고 점수와 3점 이내로 비슷한 출발 시간을 묶었어요.</p>
+        <p>최고 점수와 3점 이내이며 날씨와 주의 조건도 비슷한 출발 시간을 묶었어요.</p>
         <div v-for="group in walkTimes.groups" :key="group.startTime" class="start-time-group">
           <strong>
             {{ formatWalkTime(group.startTime) }}
@@ -394,8 +406,8 @@ onUnmounted(() => clearInterval(clockTimer))
 
       <VChart class="walk-chart" :option="walkChartOption" autoresize @click="selectChartSlot" />
       <div class="chart-legend">
-        <span class="good">● 80점 이상 후보</span>
-        <span class="careful">● 60~79점 후보</span>
+        <span class="good">● 쾌적한 후보</span>
+        <span class="careful">● 주의 조건 있는 후보</span>
         <span class="excluded">● 추천에서 제외</span>
         <small>출발 후보를 선택하면 산책 구간의 날씨와 제외 이유를 확인할 수 있어요.</small>
       </div>
@@ -414,15 +426,51 @@ onUnmounted(() => clearInterval(clockTimer))
             </option>
           </select>
         </label>
-        <el-tag :type="selectedSlot.eligible ? 'success' : 'info'" effect="light">
+        <el-tag
+          :type="
+            selectedSlot.eligible
+              ? selectedSlot.cautionFlags.length
+                ? 'warning'
+                : 'success'
+              : selectedSlot.score === null
+                ? 'info'
+                : 'danger'
+          "
+          effect="light"
+        >
           {{
             selectedSlot.score === null
               ? '정보 부족'
               : selectedSlot.eligible
-                ? '추천 후보'
+                ? selectedSlot.cautionFlags.length
+                  ? '주의 후보'
+                  : '추천 후보'
                 : '추천 제외'
           }}
         </el-tag>
+        <template v-if="selectedSlot.evaluation">
+          <h4>구간 최저점의 감점 내역</h4>
+          <p>
+            평가 시각 {{ formatWalkTime(selectedSlot.evaluatedAt) }} · 강수는
+            {{ formatWalkTime(selectedSlot.rainInterval.startTime) }}~{{
+              formatWalkTime(selectedSlot.rainInterval.endTime)
+            }}
+            구간 예보를 적용했어요.
+          </p>
+          <dl class="walk-details">
+            <div v-for="item in selectedSlot.deductions" :key="item.code">
+              <dt>{{ item.label }}</dt>
+              <dd>{{ formatMetric(item.points, '점 감점') }} · {{ item.detail }}</dd>
+            </div>
+          </dl>
+          <small
+            >항목과 총점의 표시 반올림으로 합계가 조금 다를 수 있어요. 위험 조건은 점수보다
+            우선해요.</small
+          >
+          <p v-if="selectedSlot.score === 60 && selectedSlot.unroundedScore < 60">
+            반올림 전 {{ selectedSlot.unroundedScore }}점으로 추천 기준 60점에 미달해요.
+          </p>
+        </template>
         <dl class="walk-details">
           <div>
             <dt>출발 · 종료</dt>
@@ -464,6 +512,10 @@ onUnmounted(() => clearInterval(clockTimer))
           <div>
             <dt>구간 최고 자외선 지수</dt>
             <dd>{{ formatMetric(selectedSlot.peakUv, '') }}</dd>
+          </div>
+          <div>
+            <dt>구간 최고 대기질 지수</dt>
+            <dd>{{ formatMetric(selectedSlot.peakAqi, ' AQI') }}</dd>
           </div>
         </dl>
         <div v-if="selectedSlot.blockedReasons.length" class="slot-reasons">
@@ -565,8 +617,18 @@ onUnmounted(() => clearInterval(clockTimer))
           <span class="eyebrow">BREED &amp; WEATHER PLAN</span>
           <h4>🐾 {{ profile.name }}의 오늘 산책 플랜</h4>
         </div>
-        <el-tag :type="personalizedScore >= 60 ? 'success' : 'danger'" effect="dark" round>
-          맞춤 {{ personalizedScore }}점
+        <el-tag
+          :type="
+            progressStatus === 'success'
+              ? 'success'
+              : progressStatus === 'warning'
+                ? 'warning'
+                : 'danger'
+          "
+          effect="dark"
+          round
+        >
+          {{ personalizedScore === null ? '정보 부족' : `맞춤 ${personalizedScore}점` }}
         </el-tag>
       </div>
 

@@ -29,6 +29,10 @@ test('온도 설정과 관심 도시를 변경하고 새 store에서 복원한�
 
   const configStore = useConfigStore()
   assert.equal(configStore.formatTemperature(28), '28℃')
+  assert.equal(configStore.formatTemperature(null), '정보 부족')
+  assert.equal(configStore.formatTemperature('0'), '정보 부족')
+  assert.equal(configStore.formatTemperature(0), '0℃')
+  assert.equal(configStore.formatTemperature(-5), '-5℃')
   configStore.toggleUnit()
   assert.equal(configStore.formatTemperature(28), '82℉')
   configStore.toggleTemperaturePrecision()

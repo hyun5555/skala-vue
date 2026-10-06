@@ -1,7 +1,12 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { calculatePetWalkIndex, getPetCareTips, getPetWalkGuide } from '@/services/petWeather.js'
+import {
+  evaluateWalkWeather,
+  formatWeatherMetric,
+  getPetCareTips,
+  getPetWalkGuide,
+} from '@/services/petWeather.js'
 import { getWeatherDetail } from '@/services/weatherApi.js'
 import { useConfigStore } from '@/stores/configStore.js'
 import { useFavoriteStore } from '@/stores/favoriteStore.js'
@@ -13,28 +18,43 @@ const city = ref(null)
 const loading = ref(true)
 const errorMessage = ref('')
 
-const petWalkIndex = computed(() => (city.value ? calculatePetWalkIndex(city.value) : null))
+const assessment = computed(() => (city.value ? evaluateWalkWeather(city.value) : null))
+const petWalkIndex = computed(() => assessment.value?.score ?? null)
 const petCareTips = computed(() => (city.value ? getPetCareTips(city.value) : []))
 const walkProgressStatus = computed(() => {
-  if (petWalkIndex.value >= 80) return 'success'
+  if (!assessment.value?.eligible) return 'exception'
+  if (
+    assessment.value?.eligible &&
+    !assessment.value.cautionFlags.length &&
+    petWalkIndex.value >= 80
+  )
+    return 'success'
   if (petWalkIndex.value >= 60) return 'warning'
   return 'exception'
 })
 
+let requestSequence = 0
 const loadWeather = async () => {
+  const sequence = ++requestSequence
+  const cityId = route.params.cityId
   loading.value = true
   errorMessage.value = ''
   city.value = null
   try {
-    city.value = await getWeatherDetail(route.params.cityId)
+    const result = await getWeatherDetail(cityId)
+    if (sequence === requestSequence) city.value = result
   } catch (error) {
-    errorMessage.value = error.response?.data?.message ?? '상세 날씨를 불러오지 못했습니다.'
+    if (sequence === requestSequence)
+      errorMessage.value = error.response?.data?.message ?? '상세 날씨를 불러오지 못했습니다.'
   } finally {
-    loading.value = false
+    if (sequence === requestSequence) loading.value = false
   }
 }
 
-watch(() => route.params.cityId, loadWeather, { immediate: true })
+watch(() => route.params.cityId, loadWeather, { immediate: true, flush: 'sync' })
+onBeforeUnmount(() => {
+  requestSequence += 1
+})
 </script>
 
 <template>
@@ -73,16 +93,19 @@ watch(() => route.params.cityId, loadWeather, { immediate: true })
         <el-col :xs="12" :sm="6">
           <el-card shadow="never">
             <el-statistic
+              v-if="Number.isFinite(city.temp)"
               title="현재 기온"
               :value="configStore.unit === 'fahrenheit' ? (city.temp * 9) / 5 + 32 : city.temp"
               :precision="configStore.temperaturePrecision"
               :suffix="configStore.unitSymbol"
             />
+            <p v-else>현재 기온 정보 부족</p>
           </el-card>
         </el-col>
         <el-col :xs="12" :sm="6">
           <el-card shadow="never">
             <el-statistic
+              v-if="Number.isFinite(city.feelsLike)"
               title="체감온도"
               :value="
                 configStore.unit === 'fahrenheit' ? (city.feelsLike * 9) / 5 + 32 : city.feelsLike
@@ -90,23 +113,36 @@ watch(() => route.params.cityId, loadWeather, { immediate: true })
               :precision="configStore.temperaturePrecision"
               :suffix="configStore.unitSymbol"
             />
+            <p v-else>체감온도 정보 부족</p>
           </el-card>
         </el-col>
         <el-col :xs="12" :sm="6">
           <el-card shadow="never"
-            ><el-statistic title="습도" :value="city.humidity" suffix="%"
-          /></el-card>
+            ><el-statistic
+              v-if="Number.isFinite(city.humidity)"
+              title="습도"
+              :value="city.humidity"
+              suffix="%"
+            />
+            <p v-else>습도 정보 부족</p></el-card
+          >
         </el-col>
         <el-col :xs="12" :sm="6">
           <el-card shadow="never"
-            ><el-statistic title="풍속" :value="city.wind" suffix="m/s"
-          /></el-card>
+            ><el-statistic
+              v-if="Number.isFinite(city.wind)"
+              title="풍속"
+              :value="city.wind"
+              suffix="m/s"
+            />
+            <p v-else>풍속 정보 부족</p></el-card
+          >
         </el-col>
       </el-row>
 
       <el-alert
         v-if="city.airQuality"
-        :title="`대기질 AQI ${Math.round(city.airQuality.us_aqi)} · PM2.5 ${Math.round(city.airQuality.pm2_5)}㎍/㎥`"
+        :title="`대기질 AQI ${formatWeatherMetric(city.airQuality.us_aqi)} · PM2.5 ${formatWeatherMetric(city.airQuality.pm2_5, '㎍/㎥')}`"
         type="info"
         show-icon
         :closable="false"
@@ -116,9 +152,10 @@ watch(() => route.params.cityId, loadWeather, { immediate: true })
         <div class="report-heading">
           <div>
             <h3>🐕 오늘의 반려동물 산책 리포트</h3>
-            <p>{{ getPetWalkGuide(petWalkIndex) }}</p>
+            <p>{{ getPetWalkGuide(assessment) }}</p>
           </div>
           <el-progress
+            v-if="petWalkIndex !== null"
             type="circle"
             :percentage="petWalkIndex"
             :status="walkProgressStatus"
@@ -132,6 +169,7 @@ watch(() => route.params.cityId, loadWeather, { immediate: true })
               </span>
             </template>
           </el-progress>
+          <span v-else>정보 부족</span>
         </div>
         <el-space wrap>
           <el-tag v-for="tip in petCareTips" :key="tip" type="success" effect="light">

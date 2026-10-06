@@ -1,5 +1,6 @@
 <script setup>
 import { ArrowRight, Star, StarFilled } from '@element-plus/icons-vue'
+import { formatWeatherMetric } from '@/services/petWeather.js'
 
 const props = defineProps({
   city: { type: Object, required: true },
@@ -14,6 +15,7 @@ const props = defineProps({
 defineEmits(['select-card', 'click-detail', 'toggle-favorite'])
 
 const temperatureTag = () => {
+  if (!Number.isFinite(props.city.temp)) return { type: 'info', text: '정보 부족' }
   if (props.city.temp >= 25) return { type: 'danger', text: '더운 날' }
   if (props.city.temp >= 10) return { type: 'success', text: '걷기 좋은 날' }
   return { type: 'primary', text: '쌀쌀한 날' }
@@ -64,8 +66,7 @@ const temperatureTag = () => {
           <small>바람</small><strong>{{ city.wind }}m/s</strong>
         </div>
         <div>
-          <small>대기질</small
-          ><strong>{{ city.airQuality ? Math.round(city.airQuality.us_aqi) : '-' }}</strong>
+          <small>대기질</small><strong>{{ formatWeatherMetric(city.airQuality?.us_aqi) }}</strong>
         </div>
       </div>
     </div>

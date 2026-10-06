@@ -1,4 +1,5 @@
 import axios from 'axios'
+import deploymentConfig from './vercel.json' with { type: 'json' }
 import {
   createLocationId,
   getKakaoPlaceUrl,
@@ -14,6 +15,12 @@ const cities = [
   { id: 'city_05', name: '대전', lat: 36.3504, lon: 127.3845 },
   { id: 'city_06', name: '광주', lat: 35.1595, lon: 126.8526 },
 ]
+
+export const securityHeaders = Object.fromEntries(
+  deploymentConfig.headers
+    .find(({ source }) => source === '/(.*)')
+    .headers.map(({ key, value }) => [key, value]),
+)
 
 const weatherClient = axios.create({
   baseURL: 'https://api.openweathermap.org/data/2.5',
@@ -66,6 +73,7 @@ const forecastCondition = (code) => {
   if (code >= 95) return { condition: 'Thunderstorm', status: '뇌우', emoji: '⛈️' }
   if ((code >= 71 && code <= 77) || code === 85 || code === 86)
     return { condition: 'Snow', status: '눈', emoji: '🌨️' }
+  if ([51, 53, 55].includes(code)) return { condition: 'Drizzle', status: '이슬비', emoji: '🌧️' }
   if (code >= 51) return { condition: 'Rain', status: '비', emoji: '🌧️' }
   if (code >= 45) return { condition: 'Mist', status: '안개', emoji: '🌫️' }
   if (code >= 2) return { condition: 'Clouds', status: '흐림', emoji: '☁️' }
@@ -77,15 +85,18 @@ const toWeather = (city, data, airQuality) => ({
   name: city.name,
   lat: city.lat,
   lon: city.lon,
-  temp: Math.round(data.main.temp * 10) / 10,
-  feelsLike: Math.round(data.main.feels_like * 10) / 10,
+  temp: Number.isFinite(data.main.temp) ? Math.round(data.main.temp * 10) / 10 : null,
+  feelsLike: Number.isFinite(data.main.feels_like)
+    ? Math.round(data.main.feels_like * 10) / 10
+    : null,
   status: data.weather[0].description,
   condition: data.weather[0].main,
+  weatherCode: data.weather[0].id,
   emoji: weatherEmoji(data.weather[0].icon),
   humidity: data.main.humidity,
   wind: data.wind.speed,
   airQuality,
-  rainChance: 0,
+  rainChance: null,
   precipitation: (data.rain?.['1h'] ?? 0) + (data.snow?.['1h'] ?? 0),
   updatedAt: data.dt * 1000,
 })
@@ -245,9 +256,8 @@ const json = (body, status = 200, headers = {}) =>
   Response.json(body, {
     status,
     headers: {
+      ...securityHeaders,
       'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-      'Referrer-Policy': 'no-referrer',
       ...headers,
     },
   })
@@ -337,7 +347,6 @@ export const handleRequest = async (request, env) => {
       }
       return json({
         ...toWeather(city, data, airForecast.current),
-        rainChance: hourly[0]?.rainChance ?? 0,
         forecast,
         hourly: hourly.map((slot) => ({
           ...slot,

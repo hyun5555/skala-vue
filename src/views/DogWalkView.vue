@@ -1,17 +1,20 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowRight, Location } from '@element-plus/icons-vue'
 import PetPlacesMap from '@/components/PetPlacesMap.vue'
 import DogWalkGuide from '@/components/practices/handson/weather-components/DogWalkGuide.vue'
-import { calculatePetWalkIndex, getPetCareTips } from '@/services/petWeather.js'
+import { getPetCareTips } from '@/services/petWeather.js'
 import { getWeatherDetail, getWeatherList } from '@/services/weatherApi.js'
 
 const route = useRoute()
 const router = useRouter()
 const cities = ref([])
 const city = ref(null)
-const selectedCityId = ref(String(route.query.city || 'city_01'))
+const routeCityId = computed(() =>
+  typeof route.query.city === 'string' && route.query.city ? route.query.city : 'city_01',
+)
+const selectedCityId = ref(routeCityId.value)
 const loading = ref(true)
 const errorMessage = ref('')
 
@@ -19,23 +22,55 @@ const cityOptions = computed(() => {
   const options = city.value ? [city.value, ...cities.value] : cities.value
   return options.filter((item, index) => options.findIndex(({ id }) => id === item.id) === index)
 })
-const score = computed(() => (city.value ? calculatePetWalkIndex(city.value) : 0))
 const careTips = computed(() => (city.value ? getPetCareTips(city.value) : []))
 
+let requestSequence = 0
 const loadDetail = async (cityId) => {
+  const sequence = ++requestSequence
   loading.value = true
   errorMessage.value = ''
   try {
-    city.value = await getWeatherDetail(cityId)
-    router.replace({ name: 'dog-walk', query: { city: cityId } })
+    const result = await getWeatherDetail(cityId)
+    if (sequence === requestSequence) city.value = result
   } catch (error) {
-    errorMessage.value = error.response?.data?.message ?? '맞춤 산책 날씨를 불러오지 못했습니다.'
+    if (sequence === requestSequence)
+      errorMessage.value = error.response?.data?.message ?? '맞춤 산책 날씨를 불러오지 못했습니다.'
   } finally {
-    loading.value = false
+    if (sequence === requestSequence) loading.value = false
   }
 }
 
-watch(selectedCityId, loadDetail, { immediate: true })
+const selectCity = (cityId) => {
+  if (cityId === selectedCityId.value && cityId === routeCityId.value && !errorMessage.value) return
+  const sequence = ++requestSequence
+  selectedCityId.value = cityId
+  loading.value = true
+  errorMessage.value = ''
+  const navigationError = () => {
+    if (sequence !== requestSequence) return
+    loading.value = false
+    errorMessage.value = '지역을 변경하지 못했어요. 다시 선택해 주세요.'
+  }
+  router
+    .replace({ name: 'dog-walk', query: { ...route.query, city: cityId } })
+    .then((failure) => {
+      if (!failure || sequence !== requestSequence) return
+      if (routeCityId.value === cityId) loadDetail(cityId)
+      else navigationError()
+    })
+    .catch(navigationError)
+}
+watch(
+  routeCityId,
+  (cityId) => {
+    selectedCityId.value = cityId
+    loadDetail(cityId)
+  },
+  { immediate: true, flush: 'sync' },
+)
+onBeforeUnmount(() => {
+  requestSequence += 1
+})
 onMounted(async () => {
   try {
     cities.value = await getWeatherList()
@@ -57,7 +92,12 @@ onMounted(async () => {
         <span>HOME</span><i></i><strong>🐕</strong><i></i><span>PARK</span>
       </div>
       <div class="dog-page-actions">
-        <el-select v-model="selectedCityId" filterable aria-label="산책 지역 선택">
+        <el-select
+          :model-value="selectedCityId"
+          @update:model-value="selectCity"
+          filterable
+          aria-label="산책 지역 선택"
+        >
           <template #prefix
             ><el-icon><Location /></el-icon
           ></template>
@@ -84,11 +124,13 @@ onMounted(async () => {
       show-icon
       :closable="false"
     />
+    <el-button v-if="errorMessage && !loading" @click="loadDetail(routeCityId)"
+      >다시 시도</el-button
+    >
     <DogWalkGuide
       v-if="city"
       v-show="!loading && !errorMessage"
       :city="city"
-      :score="score"
       :care-tips="careTips"
     />
 

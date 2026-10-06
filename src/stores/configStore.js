@@ -45,6 +45,7 @@ export const useConfigStore = defineStore('config', () => {
   }
 
   function formatTemperature(celsius) {
+    if (!Number.isFinite(celsius)) return '정보 부족'
     const temperature = unit.value === 'fahrenheit' ? (celsius * 9) / 5 + 32 : celsius
     return `${temperature.toFixed(temperaturePrecision.value)}${unitSymbol.value}`
   }
